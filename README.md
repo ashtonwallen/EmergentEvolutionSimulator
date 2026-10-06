@@ -43,8 +43,9 @@ dotnet run --project Tideglass.csproj -c Release
 ## Watching
 
 - Click a creature to inspect its body, parents, offspring, traits, and lifetime energy sources.
-- Drag to **orbit** the 3D camera. **Shift-drag** or middle-drag pans. Scroll zooms. **F** follows the selected organism while still allowing orbiting.
-- **Wander** / **A** moves the camera between actual living organisms, including recent offspring. It starts enabled for close-up observation; manual camera movement releases it. Camera choices never affect evolution. Follow mode hides nearby foreground bodies that would completely obscure the subject.
+- **WASD / arrow keys** move relative to the camera; **Q/E** move down/up and **Shift** moves faster. Movement stops on focus loss.
+- Drag to **orbit** the 3D camera. **Shift-drag** or middle-drag pans. Scroll zooms. **F** follows the selected organism. Dragging or keyboard movement releases follow mode.
+- **Wander** / **G** moves the camera between actual living organisms, including recent offspring. It starts disabled; enable it explicitly with the button or G. Manual camera input releases wandering and following. Camera choices never affect evolution. Foreground organisms remain visible.
 - **Space** pauses. Buttons select 1×, 5×, 20×, or 100×. Requested and achieved simulation speed are shown separately; high multipliers are limited by CPU capacity. Rendering remains independent. Simulation uses fixed 0.1-second steps at every speed.
 - **Overview** / **Escape** shows the habitat. **H** hides field notes. **F11** toggles fullscreen.
 - **O₂ map** shows a horizontal slice through the selected organism's water layer: oxygen-rich water in blue and depleted water in coral. Temperature, oxygen, dissolved carbon, tide phase, and light are shown at the selected creature, or the habitat center when nothing is selected. Gas and distance values are simulation units, not scientific measurements.

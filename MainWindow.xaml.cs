@@ -79,14 +79,16 @@ public partial class MainWindow : Window
         specimen = new SpecimenView(view); SpecimenHost.Child = specimen;
         ViewportHost.Child = view;
         view.SelectedChanged += UpdateInspector;
-        view.ManualNavigation += StopWandering;
+        view.ManualNavigation += () => { StopWandering(); view.Following = false; };
         CompositionTarget.Rendering += Frame;
         Closing += OnClosing;
-        KeyDown += OnKey;
+        PreviewKeyDown += OnKey;
+        PreviewKeyUp += (_, e) => { if (view.SetNavigationKey(e.Key, false)) e.Handled = true; };
+        Deactivated += (_, _) => view.CancelNavigation();
         SizeChanged += (_, _) => { SaveLabel.Visibility = ActualWidth < 1240 ? Visibility.Collapsed : Visibility.Visible; SpeedLabel.Visibility = ActualWidth < 1080 ? Visibility.Collapsed : Visibility.Visible; };
         if (error != null) { SaveLabel.Text = "Previous save unavailable"; Loaded += (_, _) => MessageBox.Show(this, error, "Tideglass"); }
         if (perf) { speed = 20; runner.Speed = speed; }
-        if (!smoke) { wandering = true; WanderButton.Content = "Wandering"; view.Coast(); lastWander = 0; }
+        if (!smoke) view.Coast();
         if (smallSmoke) { Width = 960; Height = 640; }
         if (Environment.GetCommandLineArgs().Contains("--smoke-coast")) view.Coast();
         if (Environment.GetCommandLineArgs().Contains("--smoke-evolved"))
@@ -223,7 +225,7 @@ public partial class MainWindow : Window
     private void CoastClick(object sender, RoutedEventArgs e) { StopWandering(); view.Coast(); }
     private void OverviewClick(object sender, RoutedEventArgs e) { StopWandering(); view.Overview(); }
     private void StopWandering() { wandering = false; WanderButton.Content = "Wander"; }
-    private void WanderClick(object sender, RoutedEventArgs e) { wandering = !wandering; WanderButton.Content = wandering ? "Wandering" : "Wander"; lastWander = -100; }
+    private void WanderClick(object sender, RoutedEventArgs e) { wandering = !wandering; WanderButton.Content = wandering ? "Wandering" : "Wander"; lastWander = -100; if (!wandering) view.Following = false; }
     private void WaterClick(object sender, RoutedEventArgs e) { view.ShowWater = !view.ShowWater; WaterButton.Content = view.ShowWater ? "O₂ map on" : "O₂ map"; }
     private async void SaveClick(object sender, RoutedEventArgs e) => await Save();
     private async Task Save()
@@ -253,10 +255,12 @@ public partial class MainWindow : Window
     }
     private void OnKey(object sender, KeyEventArgs e)
     {
+        if (view.SetNavigationKey(e.Key, true)) { e.Handled = true; return; }
+        if (e.IsRepeat) return;
         if (e.Key == Key.Space) { PauseClick(this, new()); e.Handled = true; }
         if (e.Key == Key.F) FollowClick(this, new());
         if (e.Key == Key.Escape) OverviewClick(this, new());
-        if (e.Key == Key.A) WanderClick(this, new());
+        if (e.Key == Key.G) WanderClick(this, new());
         if (e.Key == Key.H) { hidden = !hidden; Inspector.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible; }
         if (e.Key == Key.F11) { WindowStyle = WindowStyle == WindowStyle.None ? WindowStyle.SingleBorderWindow : WindowStyle.None; WindowState = WindowState.Maximized; }
     }

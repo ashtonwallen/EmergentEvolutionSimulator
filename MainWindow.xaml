@@ -31,7 +31,7 @@
      <Button x:Name="DescendantButton" Content="Follow a descendant" Click="DescendantClick" Margin="0,7,0,0" Visibility="Collapsed"/>
     </StackPanel></ScrollViewer>
    </Border>
-   <StackPanel HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="28,0,0,26" IsHitTestVisible="False"><TextBlock x:Name="EventText" Foreground="#AEC7AB" FontSize="12"/><TextBlock Text="Drag to orbit   ·   Shift-drag to pan   ·   Scroll to zoom   ·   Click to inspect   ·   F to follow   ·   F11 fullscreen" Foreground="#71948D" FontSize="11" Margin="0,9,0,0"/></StackPanel>
+   <StackPanel HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="28,0,0,26" IsHitTestVisible="False"><TextBlock x:Name="EventText" Foreground="#AEC7AB" FontSize="12"/><TextBlock Text="WASD / arrows: move   |   Q/E: vertical   |   Shift: faster&#10;Drag: orbit   |   Middle / Shift-drag: pan   |   Wheel: zoom   |   G: wander" Foreground="#71948D" FontSize="11" Margin="0,9,0,0"/></StackPanel>
    <Border x:Name="ExtinctionPanel" Visibility="Collapsed" Background="#EE10292D" CornerRadius="8" Padding="30" HorizontalAlignment="Center" VerticalAlignment="Center"><StackPanel><TextBlock Text="The last organism has returned to the water." FontSize="20"/><TextBlock Text="Extinction is part of this world. Start a new ecosystem when you’re ready." Foreground="#9FB9AF" Margin="0,12,0,20"/><Button Content="Begin a new ecosystem" Click="NewClick"/></StackPanel></Border>
   </Grid>
   <Grid Grid.Row="2" Margin="25,0">

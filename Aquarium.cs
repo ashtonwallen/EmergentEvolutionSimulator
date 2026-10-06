@@ -27,7 +27,11 @@ public sealed class Aquarium : Grid
     private V target = new(World.Width / 2, World.Height / 2, 110);
     private double yaw = -.4, elevation = .65, snapshotAt, previousFrame;
     private Point mouseStart, lastMouse;
-    private bool dragging, pan;
+    private bool dragging, pan, moved;
+    private MouseButton dragButton;
+    private readonly HashSet<Key> navigationKeys = [];
+    private V navigationVelocity, renderedTarget = new(World.Width / 2, World.Height / 2, 110);
+    private double renderedYaw = -.4, renderedElevation = .65, renderedZoom = 1.25;
     private GeometryModel3D? oxygenPlane;
     private WriteableBitmap? oxygenTexture;
     private double lastWaterUpdate = -1;
@@ -64,32 +68,79 @@ public sealed class Aquarium : Grid
         viewport.Children.Add(new ModelVisual3D { Content = scene });
         RenderOptions.SetEdgeMode(viewport, EdgeMode.Aliased);
         ResetScene(initial);
+        Focusable = true;
         MouseDown += (_, e) =>
         {
             if (e.ChangedButton != MouseButton.Left && e.ChangedButton != MouseButton.Right && e.ChangedButton != MouseButton.Middle) return;
-            ManualNavigation?.Invoke(); dragging = true; mouseStart = lastMouse = e.GetPosition(this);
-            pan = e.ChangedButton == MouseButton.Middle || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            if (dragging) return;
+            Focus(); ManualNavigation?.Invoke();
+            dragging = true; moved = false; dragButton = e.ChangedButton;
+            mouseStart = lastMouse = e.GetPosition(this);
+            pan = dragButton == MouseButton.Middle || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
             CaptureMouse(); e.Handled = true;
         };
         MouseMove += (_, e) =>
         {
             if (!dragging) return;
-            Point p = e.GetPosition(this); var d = p - lastMouse; lastMouse = p;
-            if ((p - mouseStart).Length < 4) return;
+            Point p = e.GetPosition(this);
+            if (!moved && (p - mouseStart).Length < 4) return;
+            moved = true; Following = false;
+            var d = p - lastMouse; lastMouse = p;
             if (pan)
             {
-                Following = false;
-                double amount = 2.1 / Zoom;
-                target += new V(-Math.Cos(yaw) * d.X + Math.Sin(yaw) * d.Y, Math.Sin(yaw) * d.X + Math.Cos(yaw) * d.Y, 0) * amount;
+                double amount = 2 * (2050 / renderedZoom) * Math.Tan(camera.FieldOfView * Math.PI / 360) / Math.Max(1, ActualWidth);
+                V right = new(Math.Cos(renderedYaw), -Math.Sin(renderedYaw));
+                V up = new(-Math.Sin(renderedYaw) * Math.Sin(renderedElevation), -Math.Cos(renderedYaw) * Math.Sin(renderedElevation), Math.Cos(renderedElevation));
+                target += (right * -d.X + up * d.Y) * amount;
+                ClampTarget();
             }
-            else { yaw -= d.X * .006; elevation = Math.Clamp(elevation + d.Y * .005, -.12, 1.5); }
+            else { yaw -= d.X * .004; elevation = Math.Clamp(elevation + d.Y * .004, .06, 1.48); }
+            e.Handled = true;
         };
         MouseUp += (_, e) =>
         {
-            if (!dragging) return; dragging = false; ReleaseMouseCapture();
-            if ((e.GetPosition(this) - mouseStart).Length < 5 && e.ChangedButton == MouseButton.Left) Pick(e.GetPosition(viewport));
+            if (!dragging || e.ChangedButton != dragButton) return;
+            bool click = !moved && dragButton == MouseButton.Left;
+            dragging = false; ReleaseMouseCapture();
+            if (click) Pick(e.GetPosition(viewport));
+            e.Handled = true;
         };
-        MouseWheel += (_, e) => { ManualNavigation?.Invoke(); Zoom = Math.Clamp(Zoom * (e.Delta > 0 ? 1.16 : 1 / 1.16), .55, 12); e.Handled = true; };
+        LostMouseCapture += (_, _) => { dragging = false; moved = false; };
+        MouseWheel += (_, e) =>
+        {
+            ManualNavigation?.Invoke();
+            Zoom = Math.Clamp(Zoom * Math.Exp(e.Delta / 120.0 * .14), .35, 18);
+            e.Handled = true;
+        };
+    }
+
+    public bool SetNavigationKey(Key key, bool down)
+    {
+        if (key is not (Key.W or Key.A or Key.S or Key.D or Key.Up or Key.Left or Key.Down or Key.Right or Key.Q or Key.E)) return false;
+        if (down)
+        {
+            if (navigationKeys.Add(key)) { Following = false; ManualNavigation?.Invoke(); }
+        }
+        else navigationKeys.Remove(key);
+        return true;
+    }
+    public void CancelNavigation()
+    {
+        navigationKeys.Clear(); navigationVelocity = new();
+        dragging = false; if (IsMouseCaptured) ReleaseMouseCapture();
+    }
+    private void ClampTarget() => target = new(Math.Clamp(target.X, -250, World.Width + 250), Math.Clamp(target.Y, -250, World.Height + 250), Math.Clamp(target.Z, 0, World.Depth + 500));
+    private void UpdateNavigation(double dt)
+    {
+        bool Held(Key a, Key b) => navigationKeys.Contains(a) || navigationKeys.Contains(b);
+        double x = (Held(Key.D, Key.Right) ? 1 : 0) - (Held(Key.A, Key.Left) ? 1 : 0);
+        double y = (Held(Key.W, Key.Up) ? 1 : 0) - (Held(Key.S, Key.Down) ? 1 : 0);
+        double z = (navigationKeys.Contains(Key.E) ? 1 : 0) - (navigationKeys.Contains(Key.Q) ? 1 : 0);
+        V input = new(Math.Cos(renderedYaw) * x - Math.Sin(renderedYaw) * y, -Math.Sin(renderedYaw) * x - Math.Cos(renderedYaw) * y, z);
+        if (input.Length > 1) input *= 1 / input.Length;
+        double speed = Math.Clamp(437.5 / renderedZoom, 56.25, 1500) * (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? 3 : 1);
+        navigationVelocity += (input * speed - navigationVelocity) * (1 - Math.Exp(-dt * 16));
+        if (navigationVelocity.Length > .01) { target += navigationVelocity * dt; ClampTarget(); }
     }
 
     public void Select(Organism? o) { selectedId = o?.Id; deceasedSelection = o; SelectedChanged?.Invoke(); }
@@ -209,9 +260,15 @@ public sealed class Aquarium : Grid
         double now = watch.Elapsed.TotalSeconds, elapsed = Math.Min(.1, now - previousFrame); previousFrame = now;
         double blend = Math.Clamp((now - snapshotAt) / .05, 0, 1);
         if (Following && Selected != null) target += (Selected.Center - target) * (1 - Math.Exp(-elapsed * 5));
-        double distance = 2050 / Zoom;
-        var focus = Point(target);
-        var eye = focus + new Vector3D(Math.Sin(yaw) * Math.Cos(elevation), Math.Sin(elevation), Math.Cos(yaw) * Math.Cos(elevation)) * distance;
+        UpdateNavigation(elapsed);
+        double smoothing = 1 - Math.Exp(-elapsed * 18);
+        renderedTarget += (target - renderedTarget) * smoothing;
+        renderedYaw += (yaw - renderedYaw) * smoothing;
+        renderedElevation += (elevation - renderedElevation) * smoothing;
+        renderedZoom = Math.Exp(Math.Log(renderedZoom) + (Math.Log(Zoom) - Math.Log(renderedZoom)) * smoothing);
+        double distance = 2050 / renderedZoom;
+        var focus = Point(renderedTarget);
+        var eye = focus + new Vector3D(Math.Sin(renderedYaw) * Math.Cos(renderedElevation), Math.Sin(renderedElevation), Math.Cos(renderedYaw) * Math.Cos(renderedElevation)) * distance;
         camera.Position = eye; camera.LookDirection = focus - eye; camera.UpDirection = new Vector3D(0, 1, 0);
         var forward = camera.LookDirection; forward.Normalize();
         var right = Vector3D.CrossProduct(forward, camera.UpDirection); right.Normalize();
