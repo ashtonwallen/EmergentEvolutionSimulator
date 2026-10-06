@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
- <ItemGroup><Compile Include="../Moisture.cs" Link="Moisture.cs"/><Compile Include="../PressureEcology.cs" Link="PressureEcology.cs"/><Compile Include="../Simulation.cs" Link="Simulation.cs"/><Compile Include="../SimulationRunner.cs" Link="SimulationRunner.cs"/><Compile Include="../Branching.cs" Link="Branching.cs"/><Compile Include="../Shoreline.cs" Link="Shoreline.cs"/><Compile Include="../BodySurface.cs" Link="BodySurface.cs"/></ItemGroup>
+ <ItemGroup><Compile Include="../TissueMechanics.cs" Link="TissueMechanics.cs"/><Compile Include="../Moisture.cs" Link="Moisture.cs"/><Compile Include="../PressureEcology.cs" Link="PressureEcology.cs"/><Compile Include="../Simulation.cs" Link="Simulation.cs"/><Compile Include="../SimulationRunner.cs" Link="SimulationRunner.cs"/><Compile Include="../Branching.cs" Link="Branching.cs"/><Compile Include="../Shoreline.cs" Link="Shoreline.cs"/><Compile Include="../BodySurface.cs" Link="BodySurface.cs"/></ItemGroup>
 </Project>

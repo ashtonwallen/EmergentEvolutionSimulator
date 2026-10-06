@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         {
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-3d")) File.Copy(World.SavePath, World.SavePath + ".pre-3d");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-shoreline")) File.Copy(World.SavePath, World.SavePath + ".pre-shoreline");
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-coordination")) File.Copy(World.SavePath, World.SavePath + ".pre-coordination");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-moisture")) File.Copy(World.SavePath, World.SavePath + ".pre-moisture");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-pressures")) File.Copy(World.SavePath, World.SavePath + ".pre-pressures");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-branching")) File.Copy(World.SavePath, World.SavePath + ".pre-branching");
@@ -173,11 +174,13 @@ public partial class MainWindow : Window
     }
     private void UpdateInspector()
     {
-        var o = view.Selected; if (o == null) return;
+        var o = view.Selected;
+        Inspector.Visibility = o == null || hidden ? Visibility.Collapsed : Visibility.Visible;
+        if (o == null) return;
         SpecimenHost.Visibility = Visibility.Visible;
         bool alive = world.Organisms.Contains(o);
         CreatureTitle.Text = $"Organism {o.Id:0000}";
-        CreatureInfo.Text = $"Generation {o.Generation} · {(alive ? "living" : "returned to the water")}\nAge {o.Age / 60:F1} min · {o.Children} offspring\n" + (o.ParentId == 0 ? "Founder · no ancestors" : $"Parent #{o.ParentId}" + (o.MateId > 0 ? $" + #{o.MateId}" : " · asexual birth"));
+        CreatureInfo.Text = $"Generation {o.Generation} · {(alive ? "living" : "dead")}\nAge {o.Age / 60:F1} min · {o.Children} offspring\n" + (o.ParentId == 0 ? "Founder · no ancestors" : $"Parent #{o.ParentId}" + (o.MateId > 0 ? $" + #{o.MateId}" : " · asexual birth"));
         string Change(double n, double? p) => p.HasValue && Math.Abs(n - p.Value) > .005 ? $"  ({n - p.Value:+0.00;-0.00} inherited Δ)" : "";
         var g = o.Genes; var old = o.ParentGenes;
         Traits.Text = $"ENERGY   {Math.Max(0, o.Energy):F0} / {o.Capacity:F0}\nCELLS   {o.Body.Count} / {g.Cells}" + Change(g.Cells, old?.Cells) + $"\nCELL SIZE   {g.Radius:F1}" + Change(g.Radius, old?.Radius) + $"\nCONTRACTION   {g.Contract:F2}" + Change(g.Contract, old?.Contract) + $"\nSENSING   {g.Sense:F2}" + Change(g.Sense, old?.Sense) + $"\nBRANCHING   {g.Branch:F2}" + Change(g.Branch, old?.Branch);
@@ -193,6 +196,7 @@ public partial class MainWindow : Window
         Traits.Text += $"\nTISSUE HEALTH   {o.Body.Average(c => c.Integrity):P0}\nANCHORING   {o.Anchoring:F2}\nLOCAL CURRENT   {world.FlowAt(o.Center).Length:F1}";
         if (o.BudStates.Count > 0) Traits.Text += $"\nBRANCH HEALTH   {o.BudStates.Average(b => b.Integrity):P0}\nTISSUE SIGNAL   {o.BudStates.Average(b => Math.Abs(b.Signal)):F2}";
         Traits.Text += $"\nWATERPROOFING   {g.Waterproofing:P0}\nMOISTURE RESPONSE   {g.MoistureSense:F2}\nLOCAL SOIL WATER   {world.SoilMoisture[world.SurfaceTile(o.Center)]:P0}";
+        Traits.Text += $"\nMOVEMENT POWER   {o.LocomotionPower:F3}\nCONTACT SLIP   {o.ContactSlip:F2}";
         string activity = !alive ? "Decomposed" : o.Irritation > .15 ? "Withdrawing from tissue damage" : world.Time - o.LastContact < 1 ? "Adhering on contact" : world.Time - o.LastAttack < .7 ? "Tissue-feeding contact" : world.Time - o.LastMeal < .5 ? "Feeding" : o.GroundContacts > 0 ? "Pushing against the substrate" : world.Immersion(o.Center, g.Radius) < .3 ? "Exposed by the tide" : "Moving through water";
         CreatureInfo.Text += "\n" + activity;
         double total = Math.Max(.001, o.LightEnergy + o.GrazingEnergy + o.TissueEnergy + o.ShoreEnergy);
@@ -245,7 +249,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { MessageBox.Show(this, "Could not back up the current world: " + ex.Message); changingWorld = false; return; }
         world = runner.Snapshot; view.World = world; view.Select(null); view.Overview(); changingWorld = false;
         SpecimenHost.Visibility = Visibility.Collapsed;
-        CreatureTitle.Text = "Life, at its simplest."; CreatureInfo.Text = "Select an organism to follow its growth, energy and descendants."; Traits.Text = "A fresh population of primitive founders.";
+        CreatureTitle.Text = "Organism"; CreatureInfo.Text = ""; Traits.Text = ""; Inspector.Visibility = Visibility.Collapsed;
         FollowButton.Content = "Find a creature"; DescendantButton.Visibility = Visibility.Collapsed; await Save();
     }
     private async void OnClosing(object? sender, CancelEventArgs e)

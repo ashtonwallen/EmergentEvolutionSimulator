@@ -69,9 +69,9 @@ public static class Appendages
         return new(root, joint, tip, r * (.14 + rule.Paddle * .20) * Math.Min(1, rule.Outgrowth * 3) * growth);
     }
 
-    public static V Solve(World w, Organism o, double dt, IReadOnlyList<Organism>? neighbors = null)
+    public static V Solve(World w, Organism o, double dt, IReadOnlyList<Organism>? neighbors = null, V? freeMotion = null)
     {
-        if (o.Genes.Buds != null) return Branching.Solve(w, o, dt, neighbors);
+        if (o.Genes.Buds != null) return Branching.Solve(w, o, dt, neighbors, freeMotion);
         V reaction = new(); double support = 0, load = 1 + o.Body.Count * .65;
         o.GroundContacts = 0;
         for (int n = 0; n < Sites(o); n++)

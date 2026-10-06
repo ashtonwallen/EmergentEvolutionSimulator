@@ -189,6 +189,8 @@ public sealed class Organism
     public double VerticalSpeed { get; set; }
     public V Velocity { get; set; }
     public double Anchoring { get; set; }
+    public double LocomotionPower { get; set; }
+    public double ContactSlip { get; set; }
     public double LastDamage { get; set; } = -100;
     [System.Text.Json.Serialization.JsonIgnore] public BudPose[] PhysicalBuds = [];
     [System.Text.Json.Serialization.JsonIgnore] public V BudMinimum, BudMaximum;
@@ -321,7 +323,7 @@ public sealed partial class World
             o.Age = r.NextDouble() * 40;
             w.Organisms.Add(o);
         }
-        w.Note("First light · 100 primitive founders");
+        w.Note("100 primitive founders");
         return w;
     }
 
@@ -445,8 +447,9 @@ public sealed partial class World
             thrust /= 1 + Math.Abs(g.Elongation - 1) * .15 + g.EdgeGrowth * .3;
             thrust *= (Tidal ? .8 : 1) * o.Body.Average(c => c.Integrity) * (1 + o.Irritation * .8);
             double wet = Tidal ? Immersion(center, g.Radius) : 1;
-            V appendageMotion = Tidal ? Appendages.Solve(this, o, dt, neighbors) : new V();
-            V motion = FlowAt(center) * (wet / (1 + o.Anchoring * 4)) + forward * (thrust * wet) + appendageMotion;
+            V freeMotion = FlowAt(center) * wet + forward * (thrust * wet);
+            V appendageMotion = Tidal ? Appendages.Solve(this, o, dt, neighbors, freeMotion) : new V();
+            V motion = freeMotion + appendageMotion;
             if (Tidal && center.Z < Ground(center.X, center.Y) + g.Radius * 1.5)
                 motion *= 1 / (1 + Shoreline.Sediment(center.X, center.Y) * .8 / (1 + o.GroundContacts));
             if (Tidal)
@@ -733,7 +736,7 @@ public sealed partial class World
             foreach (var o in w.Organisms) foreach (var c in o.Body)
                 c.Position = new(c.Position.X, c.Position.Y, Math.Max(c.Position.Z, w.Ground(c.Position.X * HabitatScale, c.Position.Y * HabitatScale) + o.Genes.Radius));
             foreach (var rock in w.Rocks) rock.Position = new(rock.Position.X, rock.Position.Y, w.Ground(rock.Position.X * HabitatScale, rock.Position.Y * HabitatScale) - rock.Radius * .35);
-            w.Note("The tide reaches a living shore");
+            w.Note("Shoreline habitat enabled");
         }
         if (w.FormatVersion < 4)
         {
@@ -765,7 +768,7 @@ public sealed partial class World
             w.Note("Rain, damp soil, and retained pools open new shore habitats");
         }
         if (w.SoilMoisture.Length != Cols * Rows || w.SurfaceWater.Length != Cols * Rows || w.SoilMoisture.Any(m => !double.IsFinite(m) || m < 0 || m > 1) || w.SurfaceWater.Any(m => !double.IsFinite(m) || m < 0 || m > 12)) throw new InvalidDataException("Invalid moisture fields.");
-        if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
+        if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation + b.PhaseOffset + b.PhaseRate + b.Contraction + b.Load + b.Slip) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
         return w;
     }
 }

@@ -243,6 +243,36 @@ var moistureView = shoreWater.Snapshot();
 moistureView.SoilMoisture[moistureTile] = 0;
 Require(shoreWater.SoilMoisture[moistureTile] > 0, "Snapshot shared mutable soil");
 Console.WriteLine("PASS: finite contact water, food water, permeability tradeoff, retained puddles, independent moisture snapshots");
+// Check mechanical invariants, not whether evolution produces a desired animal.
+var paddle = new BudPose(new V(0,0,120), new V(12,0,120), new V(24,0,120), 2, .25, 0, true);
+var drag = TissueMechanics.WaterDrag(paddle, 2, 1);
+V imposed = new(2, -3, 1);
+V dragForce = drag.Apply(imposed);
+Require(imposed.X * dragForce.X + imposed.Y * dragForce.Y + imposed.Z * dragForce.Z > 0, "Drag supplied energy");
+Require((drag.Apply(imposed) + drag.Apply(imposed * -1)).Length < 1e-10, "Drag favors one stroke direction");
+var resistance = Resistance.Isotropic(2) + drag;
+Require((resistance.Solve(resistance.Apply(imposed)) - imposed).Length < 1e-9, "Coupled force balance failed");
+Require(drag.Apply(new V(0,0,1)).Length > drag.Apply(new V(1,0,0)).Length, "Flat tissue lacks directional resistance");
+Organism Passive() => new() { Genes = new Genome { Cells = 1, Buds = [new BudGene { Length = 3, Width = .3, Muscle = 0, Photo = 0, Digestion = 0 }] },
+    Age = 100, Energy = 40, Body = [new Cell { Position = new V(300,300,120) }],
+    BudStates = [new BudState { Growth = 1, FormedAt = 0 }] };
+var stillWater = new World { Habitat = new LabHabitat(0) };
+var passive = Passive();
+V passiveMotion = Branching.Solve(stillWater, passive, .1, [], new V());
+Require(passiveMotion.Length < 1e-9 && passive.LocomotionPower < 1e-9, "Passive tissue self-propelled or did active work");
+passive = Passive();
+V driven = new(0, 3, 0);
+V slowed = driven + Branching.Solve(stillWater, passive, .1, [], driven);
+Require(slowed.Length < driven.Length, "Unused tissue failed to add drag");
+var linked = Passive();
+linked.Genes.Buds!.Add(new BudGene { AnchorCell = 0, AnchorAngle = 2, Length = 1, Muscle = 0, NeighborCoupling = 1, PhaseResponse = 1 });
+linked.BudStates.Add(new BudState { Growth = 1, FormedAt = 0 });
+linked.BudStates[0].Signal = 1;
+string linkedGenes = System.Text.Json.JsonSerializer.Serialize(linked.Genes);
+Branching.Solve(stillWater, linked, .1, []);
+Require(linked.BudStates[1].Signal > 0 && linked.BudStates[1].PhaseRate > 0, "Local signals did not cross the shared attachment");
+Require(System.Text.Json.JsonSerializer.Serialize(linked.Genes) == linkedGenes, "Coordination changed inherited anatomy");
+Console.WriteLine("PASS: passive drag, stroke symmetry, geometry-dependent resistance, force balance, local coordination, immutable recipes");
 if (args.Length > 0 && args[0] == "--mechanics-only") return;
 
 var world = World.Create(args.Length > 0 ? int.Parse(args[0]) : 731);

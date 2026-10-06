@@ -1,0 +1,3 @@
+## Product design preference
+
+For every project for this user: never make the product look like a generic AI-generated landing page or cover it in cheesy labels. Build the actual tool or experience first. Use direct, functional UI text only. Avoid hero copy, slogans, decorative section names, promotional filler, and redundant introductory panels. Examples to avoid: "Life, at its simplest", "Field notes", and "Unlock your potential". Prefer a working viewport and concise controls; show an inspector only when there is something to inspect. This applies across projects unless the user explicitly requests an exception.

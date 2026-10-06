@@ -146,3 +146,12 @@ Rain and tides now replenish a saved soil-moisture field. A terrain flood-fill i
 Body and appendage contact can absorb finite soil/puddle water. Waterproofing slows both evaporation and uptake; food and prey also provide water. Evaporation scales with body surface relative to water storage, including exposed appendage costs. Sea immersion replenishes water, while puddle/soil absorption draws from the local reservoir. A heritable moisture-response weight starts neutral in older genomes and mutates in descendants; it responds to local moisture gradients, with no hard-coded return-to-water behavior.
 
 Save format 7 adds moisture without replacing the population. The first launch preserves ecosystem.json.pre-moisture. These are opportunities and tradeoffs, not guarantees of permanent terrestrial species. Weather, hydrology, and body surface area are inexpensive approximations rather than a scientific water-cycle model.
+
+
+## Local coordination and mechanical locomotion
+
+New tissue force calculations solve body motion against summed directional water drag and tangential ground resistance. There is no designated power stroke or preferred swimming direction. Unused tissue adds drag and maintenance; contact geometry, stiffness, surface orientation, and motion determine reaction forces. Muscle strength falls with tissue damage, low energy and mechanical load. Positive mechanical work costs energy. Basic core wriggling remains as the primitive locomotion approximation; this is still an overdamped model rather than a full fluid or articulated rigid-body solver.
+
+Parent/child signals and optional signals between roots on the same body section affect local activation. Heritable contraction sensing, phase response, motor response, bend amplitude and bend phase can change timing and movement. New response weights start neutral and mutate only in offspring. Signal updates read the previous step together, avoiding an advantage from processing order. Phase offsets, measured load and slip are runtime state saved with the ecosystem. No preset gait, limb count, symmetry reward, complexity milestone or fitness score has been added.
+
+The inspector reports movement power and contact slip. The empty introductory inspector is hidden, and UI copy is functional. The first updated launch preserves ecosystem.json.pre-coordination.

@@ -295,7 +295,7 @@ public sealed partial class World
             var state = o.BudStates[i];
             if (i < o.PhysicalBuds.Length && o.PhysicalBuds[i].Active)
                 Detritus.Add(new Remains { Position = o.PhysicalBuds[i].Tip, Energy = state.Growth * Math.Max(.05, b.Length * b.Width * b.Width * o.Genes.Radius), Radius = Math.Max(.3, o.PhysicalBuds[i].Radius) });
-            state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0;
+            state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0; state.Load = 0; state.Slip = 0; state.PhaseRate = 0; state.Contraction = 0;
         }
         LostBranches++;
     }
