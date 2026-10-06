@@ -10,6 +10,8 @@ internal sealed class HabitatVisual
     public Model3DGroup Model { get; } = new();
     public GeometryModel3D Water => water;
     private readonly GeometryModel3D water = new(), growth = new(), foam = new(), puddles = new();
+    private const int TerrainCols = World.Cols * 2, TerrainRows = World.Rows * 2;
+    private const double TerrainStep = World.CellSize / 2;
     private const int TextureWidth = World.Cols * 4, TextureHeight = World.Rows * 4;
     private readonly double[] heights = new double[TextureWidth * TextureHeight];
     private readonly WriteableBitmap texture = new(TextureWidth, TextureHeight, 96, 96, PixelFormats.Bgra32, null);
@@ -17,16 +19,16 @@ internal sealed class HabitatVisual
     {
         for (int y = 0; y < TextureHeight; y++) for (int x = 0; x < TextureWidth; x++) heights[y * TextureWidth + x] = w.Ground(x * World.CellSize / 4, y * World.CellSize / 4);
         var mesh = new MeshGeometry3D();
-        for (int y = 0; y <= World.Rows; y++) for (int x = 0; x <= World.Cols; x++)
+        for (int y = 0; y <= TerrainRows; y++) for (int x = 0; x <= TerrainCols; x++)
         {
-            double xx = x * World.CellSize, yy = y * World.CellSize;
+            double xx = x * TerrainStep, yy = y * TerrainStep;
             mesh.Positions.Add(Aquarium.Point(new(xx, yy, w.Ground(xx, yy))));
             var normal = new Vector3D(w.Ground(xx - 1, yy) - w.Ground(xx + 1, yy), 2, w.Ground(xx, yy - 1) - w.Ground(xx, yy + 1)); normal.Normalize();
-            mesh.Normals.Add(normal); mesh.TextureCoordinates.Add(new((double)x / World.Cols, (double)y / World.Rows));
+            mesh.Normals.Add(normal); mesh.TextureCoordinates.Add(new((double)x / TerrainCols, (double)y / TerrainRows));
         }
-        for (int y = 0; y < World.Rows; y++) for (int x = 0; x < World.Cols; x++)
+        for (int y = 0; y < TerrainRows; y++) for (int x = 0; x < TerrainCols; x++)
         {
-            int a = y * (World.Cols + 1) + x, b = a + World.Cols + 1;
+            int a = y * (TerrainCols + 1) + x, b = a + TerrainCols + 1;
             foreach (int i in new[] { a, b, a + 1, a + 1, b, b + 1 }) mesh.TriangleIndices.Add(i);
         }
         mesh.Freeze();
@@ -34,14 +36,18 @@ internal sealed class HabitatVisual
         water.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(40, 61, 167, 175))); water.BackMaterial = water.Material;
         foam.Material = new EmissiveMaterial(new SolidColorBrush(Color.FromArgb(145, 161, 214, 192)));
         growth.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(114, 158, 59))); growth.BackMaterial = growth.Material;
-        puddles.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(155, 66, 136, 141))); puddles.BackMaterial = puddles.Material;
+        var poolTint = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+        poolTint.GradientStops.Add(new(Color.FromArgb(0, 66, 136, 141), 0));
+        poolTint.GradientStops.Add(new(Color.FromArgb(65, 66, 136, 141), .25));
+        poolTint.GradientStops.Add(new(Color.FromArgb(115, 66, 136, 141), 1));
+        puddles.Material = new DiffuseMaterial(poolTint); puddles.BackMaterial = puddles.Material;
         Model.Children.Add(foam); Model.Children.Add(growth); Model.Children.Add(puddles);
         Update(w);
     }
     public void Update(World w)
     {
         var pixels = new byte[TextureWidth * TextureHeight * 4];
-        var surface = new MeshGeometry3D(); var plants = new MeshGeometry3D(); var edge = new MeshGeometry3D(); var pools = new MeshGeometry3D();
+        var surface = new MeshGeometry3D(); var plants = new MeshGeometry3D(); var edge = new MeshGeometry3D(); var pools = BuildPools(w);
         double level = w.WaterLevel;
         for (int y = 0; y < World.Rows; y++) for (int x = 0; x < World.Cols; x++)
         {
@@ -49,22 +55,6 @@ internal sealed class HabitatVisual
             double xx = x * World.CellSize, yy = y * World.CellSize, h = w.Ground(xx, yy), depth = level - h;
             double algae = w.Biofilm[index] / 12;
             V[] corners = [new(xx, yy, h), new(xx, yy + World.CellSize, w.Ground(xx, yy + World.CellSize)), new(xx + World.CellSize, yy + World.CellSize, w.Ground(xx + World.CellSize, yy + World.CellSize)), new(xx + World.CellSize, yy, w.Ground(xx + World.CellSize, yy))];
-            if (w.SurfaceWater[index] > .15 && h > level)
-            {
-                double poolLevel = w.PuddleLevel(new V(xx + World.CellSize * .5, yy + World.CellSize * .5));
-                var poolCorners = new List<V>(6);
-                for (int k = 0; k < 4; k++)
-                {
-                    V a = corners[k], b = corners[(k + 1) % 4];
-                    if (a.Z < poolLevel) poolCorners.Add(new(a.X, a.Y, poolLevel + .12));
-                    if ((a.Z < poolLevel) != (b.Z < poolLevel))
-                    {
-                        double t = (poolLevel - a.Z) / (b.Z - a.Z);
-                        poolCorners.Add(new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, poolLevel + .12));
-                    }
-                }
-                for (int k = 1; k < poolCorners.Count - 1; k++) Triangle(pools, poolCorners[0], poolCorners[k], poolCorners[k + 1]);
-            }
             var clipped = new List<V>(6); var crossings = new List<V>(2);
             for (int k = 0; k < 4; k++)
             {
@@ -128,6 +118,63 @@ internal sealed class HabitatVisual
         pools.Freeze(); puddles.Geometry = pools;
         surface.Freeze(); plants.Freeze(); edge.Freeze(); water.Geometry = surface; growth.Geometry = plants; foam.Geometry = edge;
     }
+    private readonly record struct PoolVertex(V Position, double Depth);
+    private static MeshGeometry3D BuildPools(World w)
+    {
+        var mesh = new MeshGeometry3D();
+        var nodes = new PoolVertex[(TerrainCols + 1) * (TerrainRows + 1)];
+        double Sample(double[] values, double x, double y)
+        {
+            x = Math.Clamp(x / World.CellSize - .5, 0, World.Cols - 1);
+            y = Math.Clamp(y / World.CellSize - .5, 0, World.Rows - 1);
+            int ix = Math.Min((int)x, World.Cols - 2), iy = Math.Min((int)y, World.Rows - 2);
+            double fx = x - ix, fy = y - iy; int i = iy * World.Cols + ix;
+            return (values[i] * (1 - fx) + values[i + 1] * fx) * (1 - fy)
+                + (values[i + World.Cols] * (1 - fx) + values[i + World.Cols + 1] * fx) * fy;
+        }
+        var levels = new double[World.Cols * World.Rows];
+        for (int i = 0; i < levels.Length; i++)
+            levels[i] = w.Ground((i % World.Cols + .5) * World.CellSize, (i / World.Cols + .5) * World.CellSize) + w.SurfaceWater[i];
+        for (int y = 0; y <= TerrainRows; y++) for (int x = 0; x <= TerrainCols; x++)
+        {
+            double xx = x * TerrainStep, yy = y * TerrainStep, ground = w.Ground(xx, yy);
+            double level = Sample(levels, xx, yy);
+            double depth = Math.Min(Sample(w.SurfaceWater, xx, yy), level - ground) - .2;
+            if (ground < w.WaterLevel + .2) depth = -1;
+            nodes[y * (TerrainCols + 1) + x] = new(new(xx, yy, Math.Max(ground, level) + .10), depth);
+        }
+        void Clip(PoolVertex a, PoolVertex b, PoolVertex c)
+        {
+            if (a.Depth <= 0 && b.Depth <= 0 && c.Depth <= 0) return;
+            Span<PoolVertex> triangle = [a, b, c];
+            Span<PoolVertex> polygon = stackalloc PoolVertex[4]; int count = 0;
+            for (int k = 0; k < 3; k++)
+            {
+                var from = triangle[k]; var to = triangle[(k + 1) % 3];
+                if (from.Depth > 0) polygon[count++] = from;
+                if ((from.Depth > 0) != (to.Depth > 0))
+                {
+                    double t = from.Depth / (from.Depth - to.Depth);
+                    polygon[count++] = new(from.Position + (to.Position - from.Position) * t, 0);
+                }
+            }
+            int start = mesh.Positions.Count;
+            for (int k = 0; k < count; k++)
+            {
+                mesh.Positions.Add(Aquarium.Point(polygon[k].Position));
+                mesh.TextureCoordinates.Add(new(.5, Math.Clamp(polygon[k].Depth / 4, 0, 1)));
+            }
+            for (int k = 1; k < count - 1; k++)
+            { mesh.TriangleIndices.Add(start); mesh.TriangleIndices.Add(start + k); mesh.TriangleIndices.Add(start + k + 1); }
+        }
+        for (int y = 0; y < TerrainRows; y++) for (int x = 0; x < TerrainCols; x++)
+        {
+            int a = y * (TerrainCols + 1) + x, b = a + TerrainCols + 1;
+            Clip(nodes[a], nodes[b], nodes[a + 1]); Clip(nodes[a + 1], nodes[b], nodes[b + 1]);
+        }
+        return mesh;
+    }
+
     private static void Triangle(MeshGeometry3D mesh, V a, V b, V c)
     {
         int n = mesh.Positions.Count; mesh.Positions.Add(Aquarium.Point(a)); mesh.Positions.Add(Aquarium.Point(b)); mesh.Positions.Add(Aquarium.Point(c));
