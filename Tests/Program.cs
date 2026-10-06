@@ -26,12 +26,16 @@ Console.WriteLine("PASS: continuous connected watertight tissue meshes, normals,
 if (args.Length > 0 && args[0] == "--surface-check") return;
 if (args.Length > 0 && args[0] == "--benchmark")
 {
+    if (args.Length > 3) World.SimulationWorkers.MaxDegreeOfParallelism = int.Parse(args[3]);
     var benchmark = World.Load(args.Length > 1 ? args[1] : World.SavePath);
     for (int i = 0; i < 10; i++) benchmark.Step(.1);
     long allocations = GC.GetAllocatedBytesForCurrentThread();
     var watch = Stopwatch.StartNew();
     for (int i = 0; i < 300; i++) benchmark.Step(.1);
-    Console.WriteLine($"BENCHMARK population={benchmark.Organisms.Count} cells={benchmark.Organisms.Sum(o=>o.Body.Count)} ms/step={watch.Elapsed.TotalMilliseconds / 300:F3} allocated/step={(GC.GetAllocatedBytesForCurrentThread() - allocations) / 300:N0}");
+    watch.Stop();
+    long tickAllocations = GC.GetAllocatedBytesForCurrentThread() - allocations;
+    if (args.Length > 2) benchmark.Save(args[2]);
+    Console.WriteLine($"BENCHMARK population={benchmark.Organisms.Count} cells={benchmark.Organisms.Sum(o=>o.Body.Count)} ms/step={watch.Elapsed.TotalMilliseconds / 300:F3} allocated/step={tickAllocations / 300:N0}");
     return;
 }
 if (args.Length > 0 && args[0] == "--speed-check")

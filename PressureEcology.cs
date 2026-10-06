@@ -18,8 +18,9 @@ public sealed partial class World
     public int LostBranches { get; set; }
     private V[]? currentMap;
     private List<Rock>[]? rockMap;
-    private readonly Dictionary<int, List<Remains>> remainsBins = [];
-    private IEnumerable<Rock> NearbyRocks(V p)
+    private List<Remains>?[] remainsBins = [];
+    private readonly List<int> activeRemainsBins = [];
+    private List<Rock> NearbyRocks(V p)
     {
         if (rockMap == null)
         {
@@ -35,7 +36,8 @@ public sealed partial class World
         }
         return rockMap[SurfaceTile(p)];
     }
-    private readonly Dictionary<int, List<FoodClump>> clumpBins = [];
+    private List<FoodClump>?[] clumpBins = [];
+    private readonly List<int> activeClumpBins = [];
 
     public void AddHabitatDetails()
     {
@@ -124,18 +126,27 @@ public sealed partial class World
     public double GrazeSurface(V p, double radius, double wanted)
     {
         if (!SurfaceContact(p, radius, out _, out _, out var rock)) return 0;
+        return GrazeContact(p, wanted, rock);
+    }
+
+    public double GrazeContact(V p, double wanted, Rock? rock)
+    {
         if (rock != null) { double bite = Math.Min(rock.Food, wanted); rock.Food -= bite; return bite; }
         int tile = SurfaceTile(p); double eaten = Math.Min(Biofilm[tile], wanted); Biofilm[tile] -= eaten; return eaten;
     }
 
     public void PreparePhysicalFood(double dt)
     {
-        foreach (var list in clumpBins.Values) list.Clear();
-        foreach (var list in remainsBins.Values) list.Clear();
+        if (clumpBins.Length == 0) clumpBins = new List<FoodClump>?[FieldCount];
+        if (remainsBins.Length == 0) remainsBins = new List<Remains>?[Cols * Rows];
+        foreach (int key in activeClumpBins) clumpBins[key]!.Clear();
+        foreach (int key in activeRemainsBins) remainsBins[key]!.Clear();
+        activeClumpBins.Clear(); activeRemainsBins.Clear();
         foreach (var remains in Detritus)
         {
             int key = SurfaceTile(remains.Position);
-            if (!remainsBins.TryGetValue(key, out var bin)) remainsBins[key] = bin = [];
+            var bin = remainsBins[key] ??= [];
+            if (bin.Count == 0) activeRemainsBins.Add(key);
             bin.Add(remains);
         }
         for (int i = Clumps.Count - 1; i >= 0; i--)
@@ -148,7 +159,8 @@ public sealed partial class World
             c.Energy -= decay; OrganicMatter[Tile(c.Position)] += decay;
             if (c.Energy <= .005) { Clumps.RemoveAt(i); continue; }
             int key = Tile(c.Position);
-            if (!clumpBins.TryGetValue(key, out var bin)) clumpBins[key] = bin = [];
+            var bin = clumpBins[key] ??= [];
+            if (bin.Count == 0) activeClumpBins.Add(key);
             bin.Add(c);
         }
         // Nutrient fields assemble into physical parcels; energy is transferred, not created.
@@ -170,7 +182,7 @@ public sealed partial class World
 
     public double Capture(V from, V to, double radius, double capacity, double enzyme)
     {
-        if (capacity <= 0 || Clumps.Count == 0) return 0;
+        if (capacity <= 0 || Clumps.Count == 0 || clumpBins.Length == 0) return 0;
         V d = to - from; double length2 = d.LengthSquared, result = 0;
         double margin = radius + 5;
         int x0 = Math.Clamp((int)((Math.Min(from.X, to.X) - margin) / CellSize), 0, Cols - 1);
@@ -184,7 +196,8 @@ public sealed partial class World
         for (int y = y0; y <= y1 && capacity > 0; y++)
         for (int x = x0; x <= x1 && capacity > 0; x++)
         {
-            if (!clumpBins.TryGetValue((z * Rows + y) * Cols + x, out var bin)) continue;
+            var bin = clumpBins[(z * Rows + y) * Cols + x];
+            if (bin == null) continue;
             foreach (var c in bin)
             {
                 if (capacity <= 0) break;
@@ -200,14 +213,15 @@ public sealed partial class World
 
     public double CaptureRemains(V p, double radius, double capacity)
     {
-        if (capacity <= 0 || Detritus.Count == 0) return 0;
+        if (capacity <= 0 || Detritus.Count == 0 || remainsBins.Length == 0) return 0;
         double result = 0;
         int x = Math.Clamp((int)(p.X / CellSize), 0, Cols - 1), y = Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1);
         int reach = (int)Math.Ceiling((radius + 30) / CellSize);
         for (int yy = Math.Max(0, y - reach); yy <= Math.Min(Rows - 1, y + reach); yy++)
         for (int xx = Math.Max(0, x - reach); xx <= Math.Min(Cols - 1, x + reach); xx++)
         {
-            if (!remainsBins.TryGetValue(yy * Cols + xx, out var bin)) continue;
+            var bin = remainsBins[yy * Cols + xx];
+            if (bin == null) continue;
             foreach (var remains in bin)
             {
                 if (capacity <= 0) break;
@@ -221,7 +235,7 @@ public sealed partial class World
     public double FoodContactSignal(V p)
     {
         double signal = 0;
-        if (clumpBins.TryGetValue(Tile(p), out var bin)) foreach (var c in bin) signal += c.Energy / (1 + (c.Position - p).Length * .15);
+        if (clumpBins.Length != 0 && clumpBins[Tile(p)] is { } bin) foreach (var c in bin) signal += c.Energy / (1 + (c.Position - p).Length * .15);
         return signal;
     }
 

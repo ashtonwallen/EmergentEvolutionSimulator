@@ -43,6 +43,19 @@ public sealed class BudGene
     public double Photo { get; set; } = .05;
     public double Delay { get; set; }
     public double Maturation { get; set; } = 35;
+    private sealed record AttachmentProjection(double Angle, double Pitch, V Direction);
+    private volatile AttachmentProjection? cachedProjection;
+    internal V AnchorDirection()
+    {
+        var projection = cachedProjection;
+        if (projection == null || projection.Angle != AnchorAngle || projection.Pitch != AnchorPitch)
+        {
+            projection = new(AnchorAngle, AnchorPitch, new(Math.Cos(AnchorAngle) * Math.Cos(AnchorPitch),
+                Math.Sin(AnchorAngle) * Math.Cos(AnchorPitch), Math.Sin(AnchorPitch)));
+            cachedProjection = projection;
+        }
+        return projection.Direction;
+    }
     public BudGene Copy() => (BudGene)MemberwiseClone();
 }
 
@@ -197,6 +210,8 @@ public static class Branching
         var buds = o.Genes.Buds!;
         V forward = V.Direction(o.Heading, o.Pitch), side = new(-Math.Sin(o.Heading), Math.Cos(o.Heading), 0);
         V up = Cross(forward, side);
+        double reserves = Math.Clamp(o.Energy / Math.Max(1, o.Capacity * .25), .05, 1);
+        double contraction = .35 + o.Genes.Contract * .65, phaseBase = age * o.Genes.Rhythm * 2;
         for (int i = 0; i < buds.Count; i++)
         {
             var b = buds[i];
@@ -208,7 +223,8 @@ public static class Branching
             if (b.Parent >= 0) { var parent = poses[b.Parent]; root = parent.Tip; axis = Unit(parent.Tip - parent.Root); }
             else
             {
-                axis = forward * (Math.Cos(b.AnchorAngle) * Math.Cos(b.AnchorPitch)) + side * (Math.Sin(b.AnchorAngle) * Math.Cos(b.AnchorPitch)) + up * Math.Sin(b.AnchorPitch);
+                V localAxis = b.AnchorDirection();
+                axis = forward * localAxis.X + side * localAxis.Y + up * localAxis.Z;
                 double along = Dot(axis, forward) / o.Genes.Elongation, lateral = Dot(axis, side) / .95, height = Dot(axis, up) / o.Genes.Flattening;
                 double skinRadius = radius / Math.Sqrt(along * along + lateral * lateral + height * height);
                 root = o.Body[anchor].Position + axis * (skinRadius * .94);
@@ -216,9 +232,8 @@ public static class Branching
             V sideways = Unit(Cross(new V(0, 0, 1), axis));
             if (sideways.Length < .5) sideways = side;
             V vertical = Unit(Cross(axis, sideways));
-            double phase = age * o.Genes.Rhythm * 2 * b.Frequency + o.Phase + b.Phase + state.PhaseOffset + (age - o.Age) * state.PhaseRate;
-            double reserves = Math.Clamp(o.Energy / Math.Max(1, o.Capacity * .25), .05, 1);
-            double muscle = b.Muscle * (.35 + o.Genes.Contract * .65) * state.Integrity * reserves
+            double phase = phaseBase * b.Frequency + o.Phase + b.Phase + state.PhaseOffset + (age - o.Age) * state.PhaseRate;
+            double muscle = b.Muscle * contraction * state.Integrity * reserves
                 * Math.Clamp(1 + b.MotorResponse * state.Activation, 0, 2) / (1 + state.Load * (1 - b.Stiffness) * .3);
             double turn = b.Turn + Math.Sin(phase) * muscle * .65 + state.Activation * muscle * .35;
             double pitch = b.Elevation + Math.Sin(phase + b.BendPhase) * muscle * b.BendAmplitude;
@@ -293,7 +308,7 @@ public static class Branching
             flows[i] = w.FlowAt(p.Joint);
             resistance += fluidDrags[i];
             drive += fluidDrags[i].Apply(flows[i] - fluidVelocities[i]);
-            state.Contact = w.SurfaceContact(p.Tip, p.Radius * b.Flatness, out var normal, out double penetration, out _);
+            state.Contact = w.SurfaceContact(p.Tip, p.Radius * b.Flatness, out var normal, out double penetration, out var touchedRock);
             state.Stretch = Math.Clamp(Math.Max(0, penetration) / Math.Max(1, length) + state.Load * .2, 0, 1);
             if (state.Contact)
             {
@@ -307,7 +322,7 @@ public static class Branching
                 drive += supports[i] - groundDrags[i].Apply(velocity);
                 o.Anchoring += grip * b.Adhesion;
                 o.GroundContacts++;
-                double bite = w.GrazeSurface(p.Tip, p.Radius * b.Flatness, dt * .4 * area * (1 - b.Digestion * .4)); o.ShoreEnergy += bite * 1.7; o.Energy += bite * 1.7;
+                double bite = w.GrazeContact(p.Tip, dt * .4 * area * (1 - b.Digestion * .4), touchedRock); o.ShoreEnergy += bite * 1.7; o.Energy += bite * 1.7;
                 w.DrinkFood(o, bite * 1.7, w.MoistureAt(p.Tip));
                 w.AbsorbContactWater(o, p.Tip, p.Radius * b.Flatness, area, dt);
                 if (bite > .003) o.LastMeal = w.Time;
@@ -325,9 +340,10 @@ public static class Branching
             w.Carbon[tile] -= photo * .25; w.Oxygen[tile] = Math.Min(2, w.Oxygen[tile] + photo * .22);
             o.LightEnergy += photo; o.Energy += photo;
             if (neighbors != null && b.Digestion > .05)
-                foreach (var other in neighbors)
+                for (int neighbor = 0, countNeighbors = neighbors.Count; neighbor < countNeighbors; neighbor++)
                 {
-                    if (other.Energy <= 0) continue;
+                    var other = neighbors[neighbor];
+                    if (other.Energy <= 0 || b.Digestion <= other.Genes.Membrane) continue;
                     bool touching = w.TissueContact(other, p.Tip, p.Radius);
                     if (!touching) continue;
                     double stolen = Math.Min(other.Energy, dt * .8 * area * Math.Max(0, b.Digestion - other.Genes.Membrane));

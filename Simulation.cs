@@ -249,7 +249,13 @@ public sealed partial class World
     [System.Text.Json.Serialization.JsonIgnore] public double WaterLevel => Tidal ? Shoreline.WaterLevel(Time) : Depth;
     public double Ground(double x, double y) => Tidal ? Shoreline.Ground(x, y) : 0;
     public int SurfaceTile(V p) => Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1) * Cols + Math.Clamp((int)(p.X / CellSize), 0, Cols - 1);
-    public double Immersion(V p, double radius) => Math.Clamp(((Tidal && SurfaceWater[SurfaceTile(p)] > .05 ? Math.Max(WaterLevel, PuddleLevel(p)) : WaterLevel) - p.Z + radius) / (2 * radius), 0, 1);
+    public double Immersion(V p, double radius)
+    {
+        double level = WaterLevel;
+        if (p.Z + radius <= level) return 1;
+        if (Tidal && SurfaceWater[SurfaceTile(p)] > .05) level = Math.Max(level, PuddleLevel(p));
+        return Math.Clamp((level - p.Z + radius) / (2 * radius), 0, 1);
+    }
     public double Time { get; set; }
     public int NextId { get; set; } = 1;
     public int Births { get; set; }
@@ -555,7 +561,7 @@ public sealed partial class World
                     // Enzymes digest exposed tissue by the same rule as organic detritus.
                     // There is no predator flag, hunt script, or prescribed species.
                     double tissueGap = double.MaxValue;
-                    if (length < contact + 2 + (o.Body.Count + other.Body.Count) * 12)
+                    if (g.Enzymes > other.Genes.Membrane && other.Energy > 0 && length < contact + 2 + (o.Body.Count + other.Body.Count) * 12)
                         for (int a = 0; a < o.Body.Count; a++) for (int b = 0; b < other.Body.Count; b++)
                             tissueGap = Math.Min(tissueGap, (o.Body[a].Position - other.Body[b].Position).Length - g.CellRadius(a) - other.Genes.CellRadius(b));
                     if (tissueGap < 2 && other.Energy > 0)

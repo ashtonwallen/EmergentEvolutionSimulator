@@ -88,10 +88,14 @@ public sealed partial class World
         (Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1) + .5) * CellSize) + SurfaceWater[SurfaceTile(p)];
     public double WaterStorage(Organism o) => Math.Max(.5, o.Body.Count * Math.Pow(o.Genes.Radius / 6, 3) * o.Genes.Elongation * o.Genes.Flattening);
     public void DrinkFood(Organism o, double energy, double waterFraction = .8)
-        => o.Hydration = Math.Min(1, o.Hydration + Math.Max(0, energy) * waterFraction * .07 / WaterStorage(o));
+    {
+        if (energy <= 0 || waterFraction <= 0 || o.Hydration >= 1) return;
+        o.Hydration = Math.Min(1, o.Hydration + energy * waterFraction * .07 / WaterStorage(o));
+    }
 
     public void AbsorbContactWater(Organism o, V point, double radius, double area, double dt)
     {
+        if (o.Hydration >= 1 || area <= 0) return;
         if (!SurfaceContact(point, radius + .25, out _, out _, out var rock)) return;
         int tile = SurfaceTile(point);
         double damp = rock == null ? MoistureAt(point) : SoilMoisture[tile] * .35 + Rain * .4;
