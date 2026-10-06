@@ -95,6 +95,8 @@ public static class Appendages
                     double bite = Math.Min(w.Biofilm[tile], dt * .10 * rule.Outgrowth * (1 - o.Genes.Enzymes * .4));
                     w.Biofilm[tile] -= bite;
                     o.Energy = Math.Min(o.Capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
+                    w.DrinkFood(o, bite * 1.7, w.MoistureAt(p.Tip));
+                    w.AbsorbContactWater(o, p.Tip, p.Radius, rule.Outgrowth, dt);
                     if (bite > .003) o.LastMeal = w.Time;
                 }
                 else if (p.Tip.Z < w.WaterLevel)

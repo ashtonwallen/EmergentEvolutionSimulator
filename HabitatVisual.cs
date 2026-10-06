@@ -9,7 +9,7 @@ internal sealed class HabitatVisual
 {
     public Model3DGroup Model { get; } = new();
     public GeometryModel3D Water => water;
-    private readonly GeometryModel3D water = new(), growth = new(), foam = new();
+    private readonly GeometryModel3D water = new(), growth = new(), foam = new(), puddles = new();
     private const int TextureWidth = World.Cols * 4, TextureHeight = World.Rows * 4;
     private readonly double[] heights = new double[TextureWidth * TextureHeight];
     private readonly WriteableBitmap texture = new(TextureWidth, TextureHeight, 96, 96, PixelFormats.Bgra32, null);
@@ -34,13 +34,14 @@ internal sealed class HabitatVisual
         water.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(40, 61, 167, 175))); water.BackMaterial = water.Material;
         foam.Material = new EmissiveMaterial(new SolidColorBrush(Color.FromArgb(145, 161, 214, 192)));
         growth.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(114, 158, 59))); growth.BackMaterial = growth.Material;
-        Model.Children.Add(foam); Model.Children.Add(growth);
+        puddles.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(155, 66, 136, 141))); puddles.BackMaterial = puddles.Material;
+        Model.Children.Add(foam); Model.Children.Add(growth); Model.Children.Add(puddles);
         Update(w);
     }
     public void Update(World w)
     {
         var pixels = new byte[TextureWidth * TextureHeight * 4];
-        var surface = new MeshGeometry3D(); var plants = new MeshGeometry3D(); var edge = new MeshGeometry3D();
+        var surface = new MeshGeometry3D(); var plants = new MeshGeometry3D(); var edge = new MeshGeometry3D(); var pools = new MeshGeometry3D();
         double level = w.WaterLevel;
         for (int y = 0; y < World.Rows; y++) for (int x = 0; x < World.Cols; x++)
         {
@@ -48,6 +49,22 @@ internal sealed class HabitatVisual
             double xx = x * World.CellSize, yy = y * World.CellSize, h = w.Ground(xx, yy), depth = level - h;
             double algae = w.Biofilm[index] / 12;
             V[] corners = [new(xx, yy, h), new(xx, yy + World.CellSize, w.Ground(xx, yy + World.CellSize)), new(xx + World.CellSize, yy + World.CellSize, w.Ground(xx + World.CellSize, yy + World.CellSize)), new(xx + World.CellSize, yy, w.Ground(xx + World.CellSize, yy))];
+            if (w.SurfaceWater[index] > .15 && h > level)
+            {
+                double poolLevel = w.PuddleLevel(new V(xx + World.CellSize * .5, yy + World.CellSize * .5));
+                var poolCorners = new List<V>(6);
+                for (int k = 0; k < 4; k++)
+                {
+                    V a = corners[k], b = corners[(k + 1) % 4];
+                    if (a.Z < poolLevel) poolCorners.Add(new(a.X, a.Y, poolLevel + .12));
+                    if ((a.Z < poolLevel) != (b.Z < poolLevel))
+                    {
+                        double t = (poolLevel - a.Z) / (b.Z - a.Z);
+                        poolCorners.Add(new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, poolLevel + .12));
+                    }
+                }
+                for (int k = 1; k < poolCorners.Count - 1; k++) Triangle(pools, poolCorners[0], poolCorners[k], poolCorners[k + 1]);
+            }
             var clipped = new List<V>(6); var crossings = new List<V>(2);
             for (int k = 0; k < 4; k++)
             {
@@ -101,13 +118,14 @@ internal sealed class HabitatVisual
             int i = y * TextureWidth + x, tile = (y / 4) * World.Cols + x / 4;
             uint hash = unchecked((uint)i * 2246822519u); hash ^= hash >> 13;
             double grain = (.82 + (hash & 255) / 255.0 * .27) * (1 - Shoreline.Sediment(x * World.CellSize / 4, y * World.CellSize / 4) * .3);
-            double wet = Math.Clamp((level - heights[i]) / 35, 0, 1);
+            double wet = Math.Max(Math.Clamp((level - heights[i]) / 35, 0, 1), w.SoilMoisture[tile] * .8);
             double algae = w.Biofilm[tile] / 12;
             pixels[i * 4] = (byte)((107 * (1 - wet) + 83 * wet) * grain);
             pixels[i * 4 + 1] = (byte)((149 * (1 - wet) + 100 * wet) * grain);
             pixels[i * 4 + 2] = (byte)((174 * (1 - wet) + 67 * wet) * grain * (1 - algae * .18)); pixels[i * 4 + 3] = 255;
         }
         texture.WritePixels(new Int32Rect(0, 0, TextureWidth, TextureHeight), pixels, TextureWidth * 4, 0);
+        pools.Freeze(); puddles.Geometry = pools;
         surface.Freeze(); plants.Freeze(); edge.Freeze(); water.Geometry = surface; growth.Geometry = plants; foam.Geometry = edge;
     }
     private static void Triangle(MeshGeometry3D mesh, V a, V b, V c)

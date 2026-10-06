@@ -137,3 +137,12 @@ Independent chemical-field rows, current-field rows, and large-population anatom
 Fast-forward uses longer worker batches, avoids unnecessary sleeps when work is queued, and publishes visual snapshots at 10 Hz for 20x/100x requests. Physics remains at a fixed 0.1-second step. Changing the requested speed clears accumulated fast-forward debt, so returning to 1x does not continue catching up at the previous rate. The speed display highlights a throughput limit and the selected button is outlined.
 
 On a fixed saved-population fixture (about 384 survivors after the benchmark), measured tick time fell from about 19 ms to 9 ms. A separate worker check measured 1.06x, 5.00x, 13.59x and 12.89x for 1x/5x/20x/100x requests, then 1.00x after returning to 1x. High targets still converge when the CPU is saturated; these results do not promise 100x or a particular throughput for larger populations. The RTX 4080 continues to render the WPF scene; simulation work uses the Ryzen CPU, with independent stages parallelized. A short survival run and deterministic save/resume passed after these changes.
+
+
+## Gradual shore adaptation
+
+Rain and tides now replenish a saved soil-moisture field. A terrain flood-fill identifies closed depressions; those retain finite puddles while excess water drains downhill. Soil and pools evaporate, rain wets exposed terrain, and nearby rocks reduce drying. Damp terrain darkens and retained water has a visible surface. Food growth on the substrate depends on moisture, light and available carbon.
+
+Body and appendage contact can absorb finite soil/puddle water. Waterproofing slows both evaporation and uptake; food and prey also provide water. Evaporation scales with body surface relative to water storage, including exposed appendage costs. Sea immersion replenishes water, while puddle/soil absorption draws from the local reservoir. A heritable moisture-response weight starts neutral in older genomes and mutates in descendants; it responds to local moisture gradients, with no hard-coded return-to-water behavior.
+
+Save format 7 adds moisture without replacing the population. The first launch preserves ecosystem.json.pre-moisture. These are opportunities and tradeoffs, not guarantees of permanent terrestrial species. Weather, hydrology, and body surface area are inexpensive approximations rather than a scientific water-cycle model.

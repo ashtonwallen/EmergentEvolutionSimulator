@@ -52,6 +52,7 @@ public sealed class Genome
     public double KinAffinity { get; set; }
     public double TissueSense { get; set; }
     public double LightSense { get; set; }
+    public double MoistureSense { get; set; }
     public double Elongation { get; set; } = 1.3;
     public double Flattening { get; set; } = .72;
     public double Taper { get; set; } = .25;
@@ -85,6 +86,7 @@ public sealed class Genome
             if (r.NextDouble() < .5) g.KinAffinity = mate.KinAffinity;
             if (r.NextDouble() < .5) g.TissueSense = mate.TissueSense;
             if (r.NextDouble() < .5) g.LightSense = mate.LightSense;
+            if (r.NextDouble() < .5) g.MoistureSense = mate.MoistureSense;
             if (r.NextDouble() < .5) g.Elongation = mate.Elongation;
             if (r.NextDouble() < .5) g.Flattening = mate.Flattening;
             if (r.NextDouble() < .5) g.Taper = mate.Taper;
@@ -114,6 +116,7 @@ public sealed class Genome
         g.KinAffinity = Mut(g.KinAffinity, .2, -1, 1);
         g.TissueSense = Mut(g.TissueSense, .2, -1, 1);
         g.LightSense = Mut(g.LightSense, .2, -1, 1);
+        g.MoistureSense = Mut(g.MoistureSense, .2, -1, 1);
         g.Elongation = Mut(g.Elongation, .3, .7, 3.8);
         g.Flattening = Mut(g.Flattening, .14, .18, 1.25);
         g.Taper = Mut(g.Taper, .2, -.85, .85);
@@ -244,7 +247,7 @@ public sealed partial class World
     [System.Text.Json.Serialization.JsonIgnore] public double WaterLevel => Tidal ? Shoreline.WaterLevel(Time) : Depth;
     public double Ground(double x, double y) => Tidal ? Shoreline.Ground(x, y) : 0;
     public int SurfaceTile(V p) => Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1) * Cols + Math.Clamp((int)(p.X / CellSize), 0, Cols - 1);
-    public double Immersion(V p, double radius) => Math.Clamp((WaterLevel - p.Z + radius) / (2 * radius), 0, 1);
+    public double Immersion(V p, double radius) => Math.Clamp(((Tidal && SurfaceWater[SurfaceTile(p)] > .05 ? Math.Max(WaterLevel, PuddleLevel(p)) : WaterLevel) - p.Z + radius) / (2 * radius), 0, 1);
     public double Time { get; set; }
     public int NextId { get; set; } = 1;
     public int Births { get; set; }
@@ -289,13 +292,14 @@ public sealed partial class World
 
     public static World Create(int seed = 731)
     {
-        var w = new World { RandomState = (uint)seed, FormatVersion = 6, Tidal = true };
+        var w = new World { RandomState = (uint)seed, FormatVersion = 7, Tidal = true };
         var r = new Random(seed);
         for (int i = 0; i < w.Biofilm.Length; i++) w.Biofilm[i] = 3 + r.NextDouble() * 5;
         for (int i = 0; i < w.Food.Length; i++) { w.Food[i] = (1.5 + r.NextDouble() * 5) / Layers; w.OrganicMatter[i] = r.NextDouble() * 3 / Layers; }
         for (int i = 0; i < 18; i++) w.Rocks.Add(new Rock { Position = new(70 + r.NextDouble() * (Width - 140), 70 + r.NextDouble() * (Height - 140)), Radius = 18 + r.NextDouble() * 45 });
         foreach (var rock in w.Rocks) rock.Position = new(rock.Position.X, rock.Position.Y, w.Ground(rock.Position.X, rock.Position.Y) - rock.Radius * .35);
         w.AddHabitatDetails();
+        w.InitializeMoisture();
         for (int i = 0; i < 100; i++)
         {
             V p;
@@ -399,10 +403,11 @@ public sealed partial class World
             V gradient = new(FoodSignal(center + new V(24, 0), g) - FoodSignal(center - new V(24, 0), g), FoodSignal(center + new V(0, 24), g) - FoodSignal(center - new V(0, 24), g), FoodSignal(center + new V(0, 0, 48), g) - FoodSignal(center - new V(0, 0, 48), g));
             gradient *= g.Sense;
             gradient += new V(0, 0, g.LightSense * LightAt(center));
-            if (Tidal && o.Hydration < .7)
+            if (Tidal)
             {
-                double h = Ground(center.X, center.Y);
-                gradient += new V(h - Ground(center.X + 20, center.Y), h - Ground(center.X, center.Y + 20), -1) * ((.7 - o.Hydration) * g.Sense);
+                double sensitivity = g.MoistureSense * (1 - o.Hydration);
+                gradient += new V(MoistureAt(center + new V(30, 0)) - MoistureAt(center - new V(30, 0)),
+                    MoistureAt(center + new V(0, 30)) - MoistureAt(center - new V(0, 30))) * sensitivity;
             }
             o.Irritation *= Math.Exp(-dt * 1.2);
             gradient += o.ThreatDirection * (o.Irritation * (g.Sense + .15) * 4);
@@ -446,7 +451,7 @@ public sealed partial class World
                 motion *= 1 / (1 + Shoreline.Sediment(center.X, center.Y) * .8 / (1 + o.GroundContacts));
             if (Tidal)
             {
-                o.Hydration = Math.Clamp(o.Hydration + dt * (wet * .12 - (1 - wet) * .018 * (1 - g.Waterproofing * .92)), 0, 1);
+                UpdateHydration(o, dt, wet);
                 o.Energy -= dt * o.Body.Count * (Math.Max(0, .55 - o.Hydration) * 2 + g.Waterproofing * .025);
                 o.VerticalSpeed = (o.VerticalSpeed + dt * (-16 * (1 - wet) + (0.5 - g.Density) * 8 * wet)) * Math.Exp(-dt * (1 + wet * 3));
                 motion += new V(0, 0, o.VerticalSpeed);
@@ -497,9 +502,11 @@ public sealed partial class World
                     {
                         int surface = SurfaceTile(c.Position);
                         double bite = GrazeSurface(c.Position, cellRadius * g.Flattening + .2, dt * .9 * c.Integrity * (1 - g.Enzymes * .4) * (1 - g.Membrane * .3)); o.Energy = Math.Min(o.Capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
+                        DrinkFood(o, bite * 1.7, MoistureAt(c.Position));
                         if (bite > .01) o.LastMeal = Time;
                     }
                 }
+                if (Tidal) AbsorbContactWater(o, c.Position, cellRadius * g.Flattening, 1, dt);
                 int tile = Tile(c.Position);
                 double enzyme = o.LocalEnzymes(ci);
                 double photoInvestment = o.LocalPhotosynthesis(ci);
@@ -518,13 +525,14 @@ public sealed partial class World
                 double grazing = (eaten * 1.3 + digested * 1.7 + captured) * aerobic;
                 o.Energy = Math.Min(o.Capacity, o.Energy + grazing + photo);
                 o.LightEnergy += photo; o.GrazingEnergy += grazing;
+                if (Tidal) DrinkFood(o, grazing);
                 double respiration = dt * metabolicRate * .045;
                 Oxygen[tile] = Math.Max(0, Oxygen[tile] - respiration);
                 Carbon[tile] = Math.Min(3, Carbon[tile] + respiration * .8);
                 if (Oxygen[tile] < .12) o.Energy -= dt * (.12 - Oxygen[tile]) * 2;
                 if (eaten + digested > dt * .2) o.LastMeal = Time;
             }
-            o.Energy -= dt * metabolicRate * o.Body.Count * (.13 + g.Radius * .014 + g.Contract * g.Contract * .13 + g.Sense * .025 + g.Enzymes * .055 + g.Membrane * .035 + g.Photosynthesis * .04);
+            o.Energy -= dt * metabolicRate * o.Body.Count * (.13 + g.Radius * .014 + g.Contract * g.Contract * .13 + g.Sense * .025 + Math.Abs(g.MoistureSense) * .008 + g.Enzymes * .055 + g.Membrane * .035 + g.Photosynthesis * .04);
             o.Energy -= dt * o.Body.Count * (.025 * Math.Abs(g.Elongation - 1) + .035 * (1 - Math.Min(1, g.Flattening)) + .025 * g.EdgeGrowth + .015 * g.SurfaceAdhesion + .04 * o.Irritation * g.Contract);
             o.Energy -= dt * Math.Max(0, o.Age - 700) * .0007;
             Organism? mate = null;
@@ -555,6 +563,7 @@ public sealed partial class World
                         if (Tidal) DamageTissue(other, center, stolen * 1.5);
                         o.Energy = Math.Min(o.Capacity, o.Energy + stolen * .7);
                         o.TissueEnergy += stolen * .7;
+                        if (Tidal) DrinkFood(o, stolen * .7, other.Hydration);
                         if (stolen > .002 && length > .001)
                         {
                             other.ThreatDirection = diff * (-1 / length);
@@ -609,6 +618,7 @@ public sealed partial class World
 
     private void UpdateEnvironment(double dt)
     {
+        if (Tidal) UpdateMoisture(dt);
         CurrentTime = Time; currentMap = null;
         foreach (var rock in Rocks)
         {
@@ -653,9 +663,12 @@ public sealed partial class World
                 int i = y * Cols + x;
                 double h = Ground(x * CellSize, y * CellSize);
                 double patch = .15 + .85 * Math.Pow(.5 + .5 * Math.Sin(x * .23 + Math.Cos(y * .31)), 4);
-                double moisture = Math.Exp(-Math.Max(0, h - WaterLevel) / 35);
+                double moisture = SoilMoisture[i];
                 double light = Math.Exp(-Math.Max(0, WaterLevel - h) / 100) * Shoreline.Daylight(Time);
-                Biofilm[i] = Math.Clamp(Biofilm[i] + dt * (.25 * patch * moisture * light * (1 - Biofilm[i] / 12) - .001 * Biofilm[i]), 0, 12);
+                int chemistry = Tile(new V(x * CellSize, y * CellSize, h));
+                double growth = Math.Min(nextCarbon[chemistry] * 10, dt * .25 * patch * moisture * light * Math.Min(1, nextCarbon[chemistry]) * (1 - Biofilm[i] / 12));
+                nextCarbon[chemistry] -= growth * .1; nextOxygen[chemistry] = Math.Min(2, nextOxygen[chemistry] + growth * .08);
+                Biofilm[i] = Math.Clamp(Biofilm[i] + growth - dt * (.001 + (1 - moisture) * .003) * Biofilm[i], 0, 12);
             }
         }
         oxygenBuffer = Oxygen; carbonBuffer = Carbon;
@@ -667,6 +680,8 @@ public sealed partial class World
     {
         var view = new World(false) { FormatVersion = FormatVersion, Tidal = Tidal, Time = Time, Births = Births, Deaths = Deaths, Exchanges = Exchanges, RecordGeneration = RecordGeneration, TissueMeals = TissueMeals, NextId = NextId, Habitat = Habitat, RandomState = RandomState };
         bool copy = refreshFields || previous == null;
+        view.SoilMoisture = copy ? (double[])SoilMoisture.Clone() : previous!.SoilMoisture;
+        view.SurfaceWater = copy ? (double[])SurfaceWater.Clone() : previous!.SurfaceWater;
         view.Biofilm = copy ? (double[])Biofilm.Clone() : previous!.Biofilm;
         view.Food = copy ? (double[])Food.Clone() : previous!.Food;
         view.OrganicMatter = copy ? (double[])OrganicMatter.Clone() : previous!.OrganicMatter;
@@ -744,6 +759,12 @@ public sealed partial class World
             w.AddHabitatDetails(); w.CurrentTime = w.Time; w.FormatVersion = 6;
             w.Note("Currents, sheltered crevices, contact feeding, and tissue repair");
         }
+        if (w.FormatVersion < 7)
+        {
+            w.InitializeMoisture(); w.FormatVersion = 7;
+            w.Note("Rain, damp soil, and retained pools open new shore habitats");
+        }
+        if (w.SoilMoisture.Length != Cols * Rows || w.SurfaceWater.Length != Cols * Rows || w.SoilMoisture.Any(m => !double.IsFinite(m) || m < 0 || m > 1) || w.SurfaceWater.Any(m => !double.IsFinite(m) || m < 0 || m > 12)) throw new InvalidDataException("Invalid moisture fields.");
         if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
         return w;
     }

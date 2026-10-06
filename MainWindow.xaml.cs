@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         {
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-3d")) File.Copy(World.SavePath, World.SavePath + ".pre-3d");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-shoreline")) File.Copy(World.SavePath, World.SavePath + ".pre-shoreline");
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-moisture")) File.Copy(World.SavePath, World.SavePath + ".pre-moisture");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-pressures")) File.Copy(World.SavePath, World.SavePath + ".pre-pressures");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-branching")) File.Copy(World.SavePath, World.SavePath + ".pre-branching");
             world = (!smoke || perf) && File.Exists(World.SavePath) ? World.Load() : World.Create();
@@ -144,6 +145,7 @@ public partial class MainWindow : Window
             var waterAt = view.Selected?.Center ?? new V(World.Width / 2, World.Height / 2, World.Depth / 2);
             WaterLabel.Text = $"{world.Habitat.Temperature(waterAt, world.Time):F1} °C · O₂ {world.Oxygen[world.Tile(waterAt)] * 100:F0}% · carbon {world.Carbon[world.Tile(waterAt)]:F2}\nTide {world.WaterLevel:F0} / {(Math.Cos(world.Time * Math.Tau / 360) > 0 ? "rising" : "falling")} / light {Shoreline.Daylight(world.Time):P0}" + (view.ShowWater ? " · O₂ slice on" : "");
             WaterLabel.Text += $"\nCurrent {world.FlowAt(waterAt).Length:F1} / {world.Clumps.Count:N0} food parcels";
+            WaterLabel.Text += $" / soil {world.SoilMoisture[world.SurfaceTile(waterAt)]:P0}" + (world.Rain > .05 ? " / rain" : "");
             ExtinctionPanel.Visibility = world.Organisms.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             bool limited = !paused && speed > 1 && runner.AchievedSpeed > 0 && runner.AchievedSpeed < speed * .85;
             SpeedLabel.Text = paused ? "Paused" : $"{speed}\u00d7 / {runner.AchievedSpeed:F1}\u00d7 actual" + (limited ? " - limited" : "");
@@ -190,6 +192,7 @@ public partial class MainWindow : Window
         }
         Traits.Text += $"\nTISSUE HEALTH   {o.Body.Average(c => c.Integrity):P0}\nANCHORING   {o.Anchoring:F2}\nLOCAL CURRENT   {world.FlowAt(o.Center).Length:F1}";
         if (o.BudStates.Count > 0) Traits.Text += $"\nBRANCH HEALTH   {o.BudStates.Average(b => b.Integrity):P0}\nTISSUE SIGNAL   {o.BudStates.Average(b => Math.Abs(b.Signal)):F2}";
+        Traits.Text += $"\nWATERPROOFING   {g.Waterproofing:P0}\nMOISTURE RESPONSE   {g.MoistureSense:F2}\nLOCAL SOIL WATER   {world.SoilMoisture[world.SurfaceTile(o.Center)]:P0}";
         string activity = !alive ? "Decomposed" : o.Irritation > .15 ? "Withdrawing from tissue damage" : world.Time - o.LastContact < 1 ? "Adhering on contact" : world.Time - o.LastAttack < .7 ? "Tissue-feeding contact" : world.Time - o.LastMeal < .5 ? "Feeding" : o.GroundContacts > 0 ? "Pushing against the substrate" : world.Immersion(o.Center, g.Radius) < .3 ? "Exposed by the tide" : "Moving through water";
         CreatureInfo.Text += "\n" + activity;
         double total = Math.Max(.001, o.LightEnergy + o.GrazingEnergy + o.TissueEnergy + o.ShoreEnergy);

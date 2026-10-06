@@ -269,6 +269,8 @@ public static class Branching
                 o.GroundContacts++;
                 int surface = w.SurfaceTile(p.Tip);
                 double bite = w.GrazeSurface(p.Tip, p.Radius * b.Flatness, dt * .4 * area * (1 - b.Digestion * .4)); o.ShoreEnergy += bite * 1.7; o.Energy += bite * 1.7;
+                w.DrinkFood(o, bite * 1.7, w.MoistureAt(p.Tip));
+                w.AbsorbContactWater(o, p.Tip, p.Radius * b.Flatness, area, dt);
                 if (bite > .003) o.LastMeal = w.Time;
             }
             else if (p.Tip.Z < w.WaterLevel)
@@ -288,7 +290,7 @@ public static class Branching
                 + w.Capture(p.Joint, p.Tip, p.Radius, dt * area * .7, b.Digestion)
                 + w.Capture(p.Tip, next[i].Tip, p.Radius, dt * area * .3, b.Digestion)
                 + w.CaptureRemains(p.Tip, p.Radius, dt * area * b.Digestion);
-            o.GrazingEnergy += captured; o.Energy += captured;
+            o.GrazingEnergy += captured; o.Energy += captured; w.DrinkFood(o, captured);
             if (captured > .003) o.LastMeal = w.Time;
             double light = w.LightAt(p.Tip) * daylight;
             double photo = Math.Min(w.Carbon[tile] * 4, dt * .12 * area * b.Photo * light / Math.Sqrt(b.Flatness));
@@ -301,6 +303,7 @@ public static class Branching
                     bool touching = w.TissueContact(other, p.Tip, p.Radius);
                     if (!touching) continue;
                     double stolen = Math.Min(other.Energy, dt * .8 * area * Math.Max(0, b.Digestion - other.Genes.Membrane));
+                    w.DrinkFood(o, stolen * .7, other.Hydration);
                     other.Energy -= stolen; w.DamageTissue(other, p.Tip, stolen * 2); o.Energy += stolen * .7; o.TissueEnergy += stolen * .7;
                     if (stolen > .002)
                     {
