@@ -1,0 +1,12 @@
+bin/
+obj/
+dist/
+Tests/bin/
+Tests/obj/
+preview*.png
+*.user
+performance-3d.txt
+tidal-validation.json
+branching-validation.json
+
+pressure-validation.json

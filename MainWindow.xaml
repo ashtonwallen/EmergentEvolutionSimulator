@@ -1,0 +1,42 @@
+<Window x:Class="Tideglass.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Tideglass · living shallows" Width="1440" Height="940" MinWidth="960" MinHeight="640" Background="#07191D" Foreground="#D9E7DC" FontFamily="Segoe UI" WindowStartupLocation="CenterScreen">
+ <Window.Resources>
+  <Style TargetType="Button">
+   <Setter Property="Foreground" Value="#C2D7CC"/><Setter Property="Background" Value="#142D31"/><Setter Property="BorderBrush" Value="#304A49"/><Setter Property="Padding" Value="13,8"/><Setter Property="Margin" Value="3,0"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Plate" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="5" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Plate" Property="Background" Value="#2A4948"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="82"/><RowDefinition Height="*"/><RowDefinition Height="74"/></Grid.RowDefinitions>
+  <Grid Margin="28,0">
+   <StackPanel VerticalAlignment="Center"><TextBlock Text="T I D E G L A S S" FontSize="21" FontWeight="Light"/><TextBlock x:Name="RenderLabel" Text="A living volume of water · 3D" FontSize="11" Foreground="#779D99" Margin="0,5,0,0"/></StackPanel>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <StackPanel Margin="0,0,32,0"><TextBlock Text="POPULATION" FontSize="9" Foreground="#779D99"/><TextBlock x:Name="Population" FontSize="23" Text="100"/></StackPanel>
+    <StackPanel Margin="0,0,32,0"><TextBlock Text="GENERATION" FontSize="9" Foreground="#779D99"/><TextBlock x:Name="Generation" FontSize="23" Text="0"/></StackPanel>
+    <StackPanel><TextBlock Text="ECOSYSTEM TIME" FontSize="9" Foreground="#779D99"/><TextBlock x:Name="Elapsed" FontSize="23" Text="00:00:00" FontFamily="Consolas"/></StackPanel>
+   </StackPanel>
+  </Grid>
+  <Grid Grid.Row="1" ClipToBounds="True">
+   <Border x:Name="ViewportHost"/>
+   <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26" Background="#C00A2024" CornerRadius="6" Padding="14,10" IsHitTestVisible="False"><StackPanel><TextBlock Text="01 / THE TIDAL SHORE" FontSize="11" Foreground="#C6D6AA"/><TextBlock x:Name="HabitatLabel" Text="Nutrient-fed water · primitive founders" FontSize="11" Foreground="#89A9A1" Margin="0,5,0,0"/><TextBlock x:Name="WaterLabel" Foreground="#89A9A1" FontSize="11" Margin="0,5,0,0"/></StackPanel></Border>
+   <Button Content="Visit the shoreline" Click="CoastClick" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,145,0,0" Padding="14,8"/>
+   <Border x:Name="Inspector" HorizontalAlignment="Right" VerticalAlignment="Top" Width="260" Margin="0,26,26,0" Background="#ED0C2328" BorderBrush="#395653" BorderThickness="1" CornerRadius="8" Padding="20">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
+     <TextBlock Text="FIELD NOTES" Foreground="#7BA49A" FontSize="10"/>
+     <TextBlock x:Name="CreatureTitle" Text="Life, at its simplest." FontSize="20" FontWeight="Light" Margin="0,12,0,8"/>
+     <Border x:Name="SpecimenHost" Height="110" Visibility="Collapsed"/>
+     <TextBlock x:Name="CreatureInfo" Text="Select an organism to follow its growth, energy and descendants." Foreground="#A7BEB5" FontSize="12" LineHeight="20" TextWrapping="Wrap"/>
+     <Border Background="#24413F" Height="1" Margin="0,18"/>
+     <TextBlock x:Name="Traits" Text="Every body begins with a few cells. Food fuels growth. Inherited changes accumulate through reproduction." Foreground="#9FB9AF" FontSize="11" LineHeight="18" TextWrapping="Wrap"/>
+     <Button x:Name="FollowButton" Content="Find a creature" Click="FollowClick" Margin="0,18,0,0"/>
+     <Button x:Name="DescendantButton" Content="Follow a descendant" Click="DescendantClick" Margin="0,7,0,0" Visibility="Collapsed"/>
+    </StackPanel></ScrollViewer>
+   </Border>
+   <StackPanel HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="28,0,0,26" IsHitTestVisible="False"><TextBlock x:Name="EventText" Foreground="#AEC7AB" FontSize="12"/><TextBlock Text="Drag to orbit   ·   Shift-drag to pan   ·   Scroll to zoom   ·   Click to inspect   ·   F to follow   ·   F11 fullscreen" Foreground="#71948D" FontSize="11" Margin="0,9,0,0"/></StackPanel>
+   <Border x:Name="ExtinctionPanel" Visibility="Collapsed" Background="#EE10292D" CornerRadius="8" Padding="30" HorizontalAlignment="Center" VerticalAlignment="Center"><StackPanel><TextBlock Text="The last organism has returned to the water." FontSize="20"/><TextBlock Text="Extinction is part of this world. Start a new ecosystem when you’re ready." Foreground="#9FB9AF" Margin="0,12,0,20"/><Button Content="Begin a new ecosystem" Click="NewClick"/></StackPanel></Border>
+  </Grid>
+  <Grid Grid.Row="2" Margin="25,0">
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="PauseButton" Content="Ⅱ  Pause" Click="PauseClick" Width="98"/><Button Content="1×" Click="SpeedClick" Tag="1"/><Button Content="5×" Click="SpeedClick" Tag="5"/><Button Content="20×" Click="SpeedClick" Tag="20"/><Button Content="100×" Click="SpeedClick" Tag="100"/><TextBlock x:Name="SpeedLabel" Text="1× / real time" VerticalAlignment="Center" Foreground="#88A69A" FontSize="11" Margin="14,0"/></StackPanel>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right"><TextBlock x:Name="SaveLabel" Text="Autosave enabled" VerticalAlignment="Center" FontSize="11" Foreground="#88A69A" Margin="0,0,12,0"/><Button x:Name="WanderButton" Content="Wander" Click="WanderClick"/><Button x:Name="WaterButton" Content="O₂ map" Click="WaterClick"/><Button Content="Overview" Click="OverviewClick"/><Button Content="Save" Click="SaveClick"/><Button Content="New" Click="NewClick"/></StackPanel>
+  </Grid>
+ </Grid>
+</Window>
