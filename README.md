@@ -159,3 +159,16 @@ The inspector reports movement power and contact slip. The empty introductory in
 Additional CPU optimizations cache inherited attachment directions, reuse confirmed grazing contacts, use direct spatial-bin lookup, and skip water uptake and tissue-contact work when they cannot affect the result. Physics still advances in 0.1-second steps. A frozen saved-population benchmark produced byte-identical checkpoints after 310 steps before and after these changes; measured tick time decreased from about 10.5 ms to 7.6 ms. Separate 16-second app runs starting from the same save achieved 6.66x before and 10.66x after at a 20x request. These are local measurements: the faster app advances farther and therefore ends with a different population, and throughput varies with anatomy and population.
 
 For repeatable headless timing, run `dotnet run --project Tests/SimulationChecks.csproj -c Release -- --benchmark <input-save> [output-checkpoint] [worker-count]`. It warms up for 10 steps, measures 300 steps, and optionally writes a checkpoint outside the timed section. Allocation reporting covers the calling thread only. Use a copy of the save and run benchmarks sequentially.
+
+
+## Tissue memory and feeding mechanics
+
+Tissues now carry a decaying short-term signal memory. Inherited weights can feed memory, local recurrence, hunger, slip and immersion into the existing parent/child/root signaling network. New response weights default to zero and evolve only through offspring; activity and memory change during life and persist in saves. This remains a small distributed controller, not an arbitrary neural topology or learned policy.
+
+Attached mats respond to tangential scraping, tissue stiffness and taper. Suspended particles are retained according to adhesive surface, flattening and relative current speed. Dense remains resist digestive access; moving firm tissue and adhesion improve access. Tissue feeding combines enzymes with mechanical access and adhesion, while injury and food remain finite. These contact approximations create tradeoffs without named mouths, claws, gaits or complexity bonuses. Existing stiffness, muscle, sensitivity and toughness remain continuous inherited properties. New permeability changes branch water uptake and evaporation together, with a maintenance cost for specialization.
+
+Forty-nine additional rocks form broken pockets across deep water, shallows and shore, adding differently sized gaps, current shelter and damp refuges. Existing channels, tides and pools remain. Save format 8 adds the rocks once without replacing organisms or moisture fields; the app backs up the previous save as `ecosystem.json.pre-tissue-ecology`.
+
+Backlog: ancestry comparison viewer (deferred at user request); evolvable neural connections and duplication of coordinated developmental structures.
+
+Validation: Release build/publish, focused mechanics checks, a five-minute seed-149 simulation and deterministic save/resume passed. Packaged fresh-world and copied-existing-population smoke runs exited successfully. The ancestry viewer remains deferred.

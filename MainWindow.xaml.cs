@@ -39,6 +39,7 @@ public partial class MainWindow : Window
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-3d")) File.Copy(World.SavePath, World.SavePath + ".pre-3d");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-shoreline")) File.Copy(World.SavePath, World.SavePath + ".pre-shoreline");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-coordination")) File.Copy(World.SavePath, World.SavePath + ".pre-coordination");
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-tissue-ecology")) File.Copy(World.SavePath, World.SavePath + ".pre-tissue-ecology");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-moisture")) File.Copy(World.SavePath, World.SavePath + ".pre-moisture");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-pressures")) File.Copy(World.SavePath, World.SavePath + ".pre-pressures");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-branching")) File.Copy(World.SavePath, World.SavePath + ".pre-branching");

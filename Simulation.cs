@@ -300,13 +300,13 @@ public sealed partial class World
 
     public static World Create(int seed = 731)
     {
-        var w = new World { RandomState = (uint)seed, FormatVersion = 7, Tidal = true };
+        var w = new World { RandomState = (uint)seed, FormatVersion = 8, Tidal = true };
         var r = new Random(seed);
         for (int i = 0; i < w.Biofilm.Length; i++) w.Biofilm[i] = 3 + r.NextDouble() * 5;
         for (int i = 0; i < w.Food.Length; i++) { w.Food[i] = (1.5 + r.NextDouble() * 5) / Layers; w.OrganicMatter[i] = r.NextDouble() * 3 / Layers; }
         for (int i = 0; i < 18; i++) w.Rocks.Add(new Rock { Position = new(70 + r.NextDouble() * (Width - 140), 70 + r.NextDouble() * (Height - 140)), Radius = 18 + r.NextDouble() * 45 });
         foreach (var rock in w.Rocks) rock.Position = new(rock.Position.X, rock.Position.Y, w.Ground(rock.Position.X, rock.Position.Y) - rock.Radius * .35);
-        w.AddHabitatDetails();
+        w.AddHabitatDetails(); w.AddHabitatPockets();
         w.InitializeMoisture();
         for (int i = 0; i < 100; i++)
         {
@@ -773,8 +773,12 @@ public sealed partial class World
             w.InitializeMoisture(); w.FormatVersion = 7;
             w.Note("Rain, damp soil, and retained pools open new shore habitats");
         }
+        if (w.FormatVersion < 8)
+        {
+            w.AddHabitatPockets(); w.FormatVersion = 8;
+        }
         if (w.SoilMoisture.Length != Cols * Rows || w.SurfaceWater.Length != Cols * Rows || w.SoilMoisture.Any(m => !double.IsFinite(m) || m < 0 || m > 1) || w.SurfaceWater.Any(m => !double.IsFinite(m) || m < 0 || m > 12)) throw new InvalidDataException("Invalid moisture fields.");
-        if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation + b.PhaseOffset + b.PhaseRate + b.Contraction + b.Load + b.Slip) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
+        if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation + b.PhaseOffset + b.PhaseRate + b.Contraction + b.Load + b.Slip + b.Memory + b.Signal) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
         return w;
     }
 }

@@ -51,6 +51,24 @@ public sealed partial class World
         }
     }
 
+    public void AddHabitatPockets()
+    {
+        rockMap = null; currentMap = null;
+        waterCapacity = null; moistureShelter = null; runoff = null;
+        // Broken arcs cross deep water, tidal shallows and damp shore. Gaps have no occupant rules.
+        for (int patch = 0; patch < 7; patch++)
+        {
+            double cx = 650 + patch * 260, cy = 310 + (patch % 3) * 440;
+            for (int i = 0; i < 7; i++)
+            {
+                double angle = i * .72 + patch * .4;
+                double x = cx + Math.Cos(angle) * 73, y = cy + Math.Sin(angle) * 60;
+                double radius = 12 + (patch * 7 + i * 11) % 19;
+                Rocks.Add(new Rock { Position = new(x, y, Ground(x, y) + radius * .35), Radius = radius });
+            }
+        }
+    }
+
     public V FlowAt(V p)
     {
         if (!Tidal) return Habitat.Flow(p, Time);
@@ -211,7 +229,7 @@ public sealed partial class World
         return result;
     }
 
-    public double CaptureRemains(V p, double radius, double capacity)
+    public double CaptureRemains(V p, double radius, double capacity, double mechanicalAccess = 0)
     {
         if (capacity <= 0 || Detritus.Count == 0 || remainsBins.Length == 0) return 0;
         double result = 0;
@@ -226,7 +244,10 @@ public sealed partial class World
             {
                 if (capacity <= 0) break;
                 if ((remains.Position - p).LengthSquared > Math.Pow(radius + remains.Radius, 2)) continue;
-                double bite = Math.Min(remains.Energy, capacity); remains.Energy -= bite; capacity -= bite; result += bite * 1.7;
+                // Dense intact remains resist digestion; tearing/gripping exposes more material.
+                double density = remains.Energy / Math.Max(1, remains.Radius * remains.Radius);
+                double access = (.25 + mechanicalAccess) / (.25 + mechanicalAccess + density);
+                double bite = Math.Min(remains.Energy, capacity * access); remains.Energy -= bite; capacity -= bite; result += bite * 1.7;
             }
         }
         return result;
@@ -309,7 +330,7 @@ public sealed partial class World
             var state = o.BudStates[i];
             if (i < o.PhysicalBuds.Length && o.PhysicalBuds[i].Active)
                 Detritus.Add(new Remains { Position = o.PhysicalBuds[i].Tip, Energy = state.Growth * Math.Max(.05, b.Length * b.Width * b.Width * o.Genes.Radius), Radius = Math.Max(.3, o.PhysicalBuds[i].Radius) });
-            state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0; state.Load = 0; state.Slip = 0; state.PhaseRate = 0; state.Contraction = 0;
+            state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0; state.Memory = 0; state.Activation = 0; state.Load = 0; state.Slip = 0; state.PhaseRate = 0; state.Contraction = 0;
         }
         LostBranches++;
     }

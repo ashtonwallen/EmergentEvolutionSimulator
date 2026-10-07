@@ -31,6 +31,13 @@ public sealed class BudGene
     public double MotorResponse { get; set; }
     public double BendAmplitude { get; set; }
     public double BendPhase { get; set; }
+    public double MemoryResponse { get; set; }
+    public double MemoryTime { get; set; } = 2;
+    public double RecurrentResponse { get; set; }
+    public double HungerResponse { get; set; }
+    public double SlipResponse { get; set; }
+    public double MoistureResponse { get; set; }
+    public double Permeability { get; set; } = .5;
     public double StretchResponse { get; set; }
     public double SignalDelay { get; set; } = .25;
     public double Toughness { get; set; } = .1;
@@ -69,6 +76,7 @@ public sealed class BudState
     public double Integrity { get; set; } = 1;
     public double LastDamage { get; set; } = -100;
     public double Signal { get; set; }
+    public double Memory { get; set; }
     public double Stretch { get; set; }
     public double PhaseOffset { get; set; }
     public double PhaseRate { get; set; }
@@ -117,7 +125,7 @@ public static class Branching
         for (int i = 0; i < g.Buds.Count; i++)
         {
             var b = g.Buds[i];
-            if (b.Parent < -1 || b.Parent >= i || b.AnchorCell < 0 || b.AnchorCell >= g.Cells || !double.IsFinite(b.Length + b.Width + b.Flatness + b.Turn + b.Elevation + b.AnchorAngle + b.AnchorPitch + b.Muscle + b.Phase + b.Frequency + b.Coupling + b.Stiffness + b.TouchResponse + b.FoodResponse + b.LightResponse + b.Digestion + b.Photo + b.Adhesion + b.Delay + b.Maturation + b.Taper + b.ChildCoupling + b.StretchResponse + b.SignalDelay + b.Toughness + b.Repair + b.NeighborCoupling + b.ContractionSense + b.PhaseResponse + b.MotorResponse + b.BendAmplitude + b.BendPhase) || b.Length <= 0 || b.Width <= 0 || b.Flatness <= 0 || b.Maturation <= 0) return false;
+            if (b.Parent < -1 || b.Parent >= i || b.AnchorCell < 0 || b.AnchorCell >= g.Cells || !double.IsFinite(b.Length + b.Width + b.Flatness + b.Turn + b.Elevation + b.AnchorAngle + b.AnchorPitch + b.Muscle + b.Phase + b.Frequency + b.Coupling + b.Stiffness + b.TouchResponse + b.FoodResponse + b.LightResponse + b.Digestion + b.Photo + b.Adhesion + b.Delay + b.Maturation + b.Taper + b.ChildCoupling + b.StretchResponse + b.SignalDelay + b.Toughness + b.Repair + b.NeighborCoupling + b.ContractionSense + b.PhaseResponse + b.MotorResponse + b.BendAmplitude + b.BendPhase + b.MemoryResponse + b.MemoryTime + b.RecurrentResponse + b.HungerResponse + b.SlipResponse + b.MoistureResponse + b.Permeability) || b.MemoryTime <= 0 || b.Permeability < 0 || b.Permeability > 1 || b.Length <= 0 || b.Width <= 0 || b.Flatness <= 0 || b.Maturation <= 0) return false;
         }
         return true;
     }
@@ -150,6 +158,13 @@ public static class Branching
             b.MotorResponse = Mut(b.MotorResponse, .3, -1, 1);
             b.BendAmplitude = Mut(b.BendAmplitude, .25, -1, 1);
             b.BendPhase = Mut(b.BendPhase, .6, -Math.PI, Math.PI);
+            b.MemoryResponse = Mut(b.MemoryResponse, .3, -1, 1);
+            b.MemoryTime = Mut(b.MemoryTime, 1.5, .1, 20);
+            b.RecurrentResponse = Mut(b.RecurrentResponse, .3, -1, 1);
+            b.HungerResponse = Mut(b.HungerResponse, .3, -1, 1);
+            b.SlipResponse = Mut(b.SlipResponse, .3, -1, 1);
+            b.MoistureResponse = Mut(b.MoistureResponse, .3, -1, 1);
+            b.Permeability = Mut(b.Permeability, .15, 0, 1);
             b.StretchResponse = Mut(b.StretchResponse, .3, -1, 1);
             b.SignalDelay = Mut(b.SignalDelay, .2, .05, 3);
             b.Toughness = Mut(b.Toughness, .2, 0, 1);
@@ -322,17 +337,25 @@ public static class Branching
                 drive += supports[i] - groundDrags[i].Apply(velocity);
                 o.Anchoring += grip * b.Adhesion;
                 o.GroundContacts++;
-                double bite = w.GrazeContact(p.Tip, dt * .4 * area * (1 - b.Digestion * .4), touchedRock); o.ShoreEnergy += bite * 1.7; o.Energy += bite * 1.7;
+                // Tangential scraping and a firm narrow edge detach attached food.
+                double scrape = Math.Min(2, state.Slip / 5) * strength / Math.Max(.25, b.Taper);
+                double bite = w.GrazeContact(p.Tip, dt * .4 * area * (1 - b.Digestion * .4) * (.25 + scrape), touchedRock); o.ShoreEnergy += bite * 1.7; o.Energy += bite * 1.7;
                 w.DrinkFood(o, bite * 1.7, w.MoistureAt(p.Tip));
-                w.AbsorbContactWater(o, p.Tip, p.Radius * b.Flatness, area, dt);
+                w.AbsorbContactWater(o, p.Tip, p.Radius * b.Flatness, area * (.2 + 1.6 * b.Permeability), dt);
                 if (bite > .003) o.LastMeal = w.Time;
             }
             int tile = w.Tile(p.Tip);
             double wet = w.Immersion(p.Tip, Math.Max(.1, p.Radius));
-            double captured = w.Capture(p.Root, p.Joint, p.Radius, dt * area * .7, b.Digestion)
-                + w.Capture(p.Joint, p.Tip, p.Radius, dt * area * .7, b.Digestion)
-                + w.Capture(p.Tip, next[i].Tip, p.Radius, dt * area * .3, b.Digestion)
-                + w.CaptureRemains(p.Tip, p.Radius, dt * area * b.Digestion);
+            // Broad adhesive surfaces retain particles; rapid flow washes poorly held food past.
+            double relativeFlow = (flows[i] - free - fluidVelocities[i]).Length;
+            double retention = Math.Clamp((.2 + b.Adhesion * 1.6) / Math.Sqrt(b.Flatness)
+                / (1 + relativeFlow * .08 * (1 - b.Adhesion)), .05, 2);
+            double cutting = b.Stiffness * b.Muscle * state.Integrity * Math.Min(2, (velocity + free).Length / 5)
+                / Math.Max(.25, b.Taper);
+            double captured = w.Capture(p.Root, p.Joint, p.Radius, dt * area * .7 * retention, b.Digestion)
+                + w.Capture(p.Joint, p.Tip, p.Radius, dt * area * .7 * retention, b.Digestion)
+                + w.Capture(p.Tip, next[i].Tip, p.Radius, dt * area * .3 * retention, b.Digestion)
+                + w.CaptureRemains(p.Tip, p.Radius, dt * area * b.Digestion, cutting + b.Adhesion);
             o.GrazingEnergy += captured; o.Energy += captured; w.DrinkFood(o, captured);
             if (captured > .003) o.LastMeal = w.Time;
             double light = w.LightAt(p.Tip) * daylight;
@@ -343,10 +366,10 @@ public static class Branching
                 for (int neighbor = 0, countNeighbors = neighbors.Count; neighbor < countNeighbors; neighbor++)
                 {
                     var other = neighbors[neighbor];
-                    if (other.Energy <= 0 || b.Digestion <= other.Genes.Membrane) continue;
+                    if (other.Energy <= 0 || other == o || b.Digestion * (1 + cutting) <= other.Genes.Membrane) continue;
                     bool touching = w.TissueContact(other, p.Tip, p.Radius);
                     if (!touching) continue;
-                    double stolen = Math.Min(other.Energy, dt * .8 * area * Math.Max(0, b.Digestion - other.Genes.Membrane));
+                    double stolen = Math.Min(other.Energy, dt * .8 * area * Math.Max(0, b.Digestion - other.Genes.Membrane / (1 + cutting)) * (.25 + b.Adhesion));
                     w.DrinkFood(o, stolen * .7, other.Hydration);
                     other.Energy -= stolen; w.DamageTissue(other, p.Tip, stolen * 2); o.Energy += stolen * .7; o.TissueEnergy += stolen * .7;
                     if (stolen > .002)
@@ -364,13 +387,18 @@ public static class Branching
             if (b.Parent < 0 && b.AnchorCell < o.Body.Count && anchorCounts[b.AnchorCell] > 1)
                 peers = (anchorSignals[b.AnchorCell] - signals[i]) / (anchorCounts[b.AnchorCell] - 1);
             double input = b.TouchResponse * (state.Contact ? 1 : 0) + b.FoodResponse * food + b.LightResponse * light + b.StretchResponse * state.Stretch
-                + (b.Parent >= 0 ? signals[b.Parent] * b.Coupling : 0) + (count > 0 ? children / count * b.ChildCoupling : 0) + peers * b.NeighborCoupling;
+                + (b.Parent >= 0 ? signals[b.Parent] * b.Coupling : 0) + (count > 0 ? children / count * b.ChildCoupling : 0) + peers * b.NeighborCoupling
+                + b.MemoryResponse * state.Memory + b.RecurrentResponse * state.Signal
+                + b.HungerResponse * (1 - Math.Clamp(o.Energy / o.Capacity, 0, 1))
+                + b.SlipResponse * Math.Tanh(state.Slip * .2)
+                + b.MoistureResponse * (wet - .5);
+            state.Memory += (state.Signal - state.Memory) * (1 - Math.Exp(-dt / b.MemoryTime));
             state.Signal += (Math.Clamp(input + state.Activation * .15, -1, 1) - state.Signal) * Math.Min(1, dt / Math.Max(.05, b.SignalDelay));
             state.Activation += (state.Signal - state.Activation) * Math.Min(1, dt * 3);
             state.PhaseRate = b.PhaseResponse * state.Signal * 2;
             state.Contraction = Math.Sin(o.Age * o.Genes.Rhythm * 2 * b.Frequency + o.Phase + b.Phase + state.PhaseOffset) * b.Muscle * state.Integrity;
-            double sensors = Math.Abs(b.TouchResponse) + Math.Abs(b.FoodResponse) + Math.Abs(b.LightResponse) + Math.Abs(b.StretchResponse) + Math.Abs(b.ContractionSense) + Math.Abs(b.NeighborCoupling);
-            o.Energy -= dt * (volume * (.035 + b.Stiffness * .02 + b.Toughness * .04 + b.Repair * .01) + area * (.025 * b.Muscle * b.Muscle + .012 * b.Photo + .012 * b.Digestion + .01 * b.Adhesion + sensors * .005));
+            double sensors = Math.Abs(b.TouchResponse) + Math.Abs(b.FoodResponse) + Math.Abs(b.LightResponse) + Math.Abs(b.StretchResponse) + Math.Abs(b.ContractionSense) + Math.Abs(b.NeighborCoupling) + Math.Abs(b.MemoryResponse) + Math.Abs(b.RecurrentResponse) + Math.Abs(b.HungerResponse) + Math.Abs(b.SlipResponse) + Math.Abs(b.MoistureResponse);
+            o.Energy -= dt * (volume * (.035 + b.Stiffness * .02 + b.Toughness * .04 + b.Repair * .01 + Math.Abs(b.Permeability - .5) * .015) + area * (.025 * b.Muscle * b.Muscle + .012 * b.Photo + .012 * b.Digestion + .01 * b.Adhesion + sensors * .005));
         }
         V motion = resistance.Solve(drive);
         if (motion.Length > 40) motion *= 40 / motion.Length; // Numerical guard, not a fitness target.

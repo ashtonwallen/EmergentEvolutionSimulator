@@ -120,7 +120,7 @@ public sealed partial class World
         if (g.Buds != null) for (int i = 0; i < o.BudStates.Count; i++)
         {
             var b = g.Buds[i]; double growth = o.BudStates[i].Growth;
-            area += b.Length * b.Width * growth * growth * .3;
+            area += b.Length * b.Width * growth * growth * .3 * (.2 + 1.6 * b.Permeability);
         }
         double shelter = moistureShelter![SurfaceTile(p)] * Math.Exp(-Math.Max(0, p.Z - Ground(p.X, p.Y)) / 30);
         double humidity = SoilMoisture[SurfaceTile(p)] * Math.Exp(-Math.Max(0, p.Z - Ground(p.X, p.Y)) / 22);
