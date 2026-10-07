@@ -210,17 +210,23 @@ internal sealed class HabitatVisual
     {
         const int width = 192, height = 96;
         var pixels = new byte[width * height * 4];
+        // Broad irregular mineral patches; crossed sine waves read as a checkerboard.
+        (double X, double Y, double Z, double Spread, double Strength)[] patches =
+        [(.3, .8, .4, 2.1, .07), (-.7, .2, .6, 3.7, -.06), (.8, -.4, -.2, 2.8, -.05),
+         (-.2, -.6, .8, 4.1, .05), (-.6, -.7, -.3, 2.3, .04), (.1, .4, -.8, 3.2, -.04)];
         for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
         {
             double angle = x * Math.PI * 2 / (width - 1), latitude = y * Math.PI / (height - 1);
             double nx = Math.Cos(angle) * Math.Sin(latitude), ny = Math.Sin(angle) * Math.Sin(latitude), nz = Math.Cos(latitude);
-            double mottling = Math.Sin(nx * 13 + nz * 9) * Math.Sin(ny * 17 - nz * 7);
-            double vein = Math.Pow(Math.Max(0, Math.Cos(nz * 35 + Math.Sin(nx * 6) + ny * 3)), 12);
-            double grain = Math.Sin(nx * 211 + ny * 97 + nz * 137) * 3;
-            double shade = 1 + mottling * .12 + vein * .13;
+            double shade = 1;
+            foreach (var patch in patches)
+            {
+                double dx = nx - patch.X, dy = ny - patch.Y, dz = nz - patch.Z;
+                shade += patch.Strength * Math.Exp(-(dx * dx + dy * dy + dz * dz) * patch.Spread);
+            }
             int i = (y * width + x) * 4;
-            pixels[i] = (byte)(79 * shade + grain); pixels[i + 1] = (byte)(84 * shade + grain);
-            pixels[i + 2] = (byte)(80 * shade + grain); pixels[i + 3] = 255;
+            pixels[i] = (byte)(79 * shade); pixels[i + 1] = (byte)(84 * shade);
+            pixels[i + 2] = (byte)(80 * shade); pixels[i + 3] = 255;
         }
         var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4); bitmap.Freeze();
         var material = new DiffuseMaterial(new ImageBrush(bitmap)); material.Freeze(); return material;
