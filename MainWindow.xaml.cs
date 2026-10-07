@@ -24,12 +24,23 @@ public partial class MainWindow : Window
     private readonly bool smokeDetail = Environment.GetCommandLineArgs().Contains("--smoke-detail");
     private bool detailSelected;
     private bool closingComplete, closingStarted, changingWorld;
-    private readonly bool perf = Environment.GetCommandLineArgs().Any(a => a == "--smoke-perf" || a == "--smoke-reduced");
+    private readonly bool perf = Environment.GetCommandLineArgs().Any(a => a == "--smoke-perf" || a == "--smoke-reduced" || a == "--smoke-display-benchmark");
     private readonly bool smallSmoke = Environment.GetCommandLineArgs().Contains("--smoke-small");
     private readonly List<double> frameTimes = [];
     private readonly List<double> renderCosts = [];
     private bool wandering;
     private double lastWander = -100;
+    private readonly DispatcherTimer maintenanceTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly bool noDisplaySmoke = Environment.GetCommandLineArgs().Contains("--smoke-no-display");
+    private double noDisplaySmokeStarted;
+    private bool noDisplaySmokeRestored;
+    private readonly bool displayBenchmark = Environment.GetCommandLineArgs().Contains("--smoke-display-benchmark");
+    private bool displayBenchmarkStarted, displayBenchmarkFinished;
+    private double displayBenchmarkAt, displayBenchmarkTime;
+    private Task? saveOperation;
+    private bool wakeRequested, wakeFailed;
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint SetThreadExecutionState(uint flags);
     public MainWindow()
     {
         InitializeComponent();
@@ -86,14 +97,21 @@ public partial class MainWindow : Window
         view.SelectedChanged += UpdateInspector;
         view.ManualNavigation += () => { StopWandering(); view.Following = false; };
         CompositionTarget.Rendering += Frame;
+        maintenanceTimer.Tick += Maintenance;
+        maintenanceTimer.Start();
         Closing += OnClosing;
         PreviewKeyDown += OnKey;
         PreviewKeyUp += (_, e) => { if (view.SetNavigationKey(e.Key, false)) e.Handled = true; };
         Deactivated += (_, _) => view.CancelNavigation();
         SizeChanged += (_, _) => { SaveLabel.Visibility = ActualWidth < 1240 ? Visibility.Collapsed : Visibility.Visible; SpeedLabel.Visibility = ActualWidth < 1080 ? Visibility.Collapsed : Visibility.Visible; };
         if (error != null) { SaveLabel.Text = "Previous save unavailable"; Loaded += (_, _) => MessageBox.Show(this, error, "Tideglass"); }
-        if (perf) { speed = 20; runner.Speed = speed; }
+        if (perf) { speed = displayBenchmark ? 100 : 20; runner.Speed = speed; }
         if (!smoke) view.Coast();
+        if (noDisplaySmoke || Environment.GetCommandLineArgs().Contains("--no-display")) Loaded += (_, _) =>
+        {
+            noDisplaySmokeStarted = runner.Status.Time;
+            NoDisplayClick(this, new());
+        };
         if (smallSmoke) { Width = 960; Height = 640; }
         if (Environment.GetCommandLineArgs().Contains("--smoke-coast")) view.Coast();
         if (Environment.GetCommandLineArgs().Contains("--smoke-rocks")) view.RockPreview();
@@ -105,7 +123,7 @@ public partial class MainWindow : Window
     private void Frame(object? sender, EventArgs args)
     {
         double now = clock.Elapsed.TotalSeconds;
-        if (now == previous || changingWorld) return;
+        if (now == previous || changingWorld || runner.NoDisplay) return;
         bool reduced = runner.ReducedDisplay && !paused && speed > 1;
         if (reduced && now - lastViewportUpdate < .1) return;
         lastViewportUpdate = now;
@@ -164,8 +182,7 @@ public partial class MainWindow : Window
             RenderLabel.Text = $"3D · {Math.Min(999, 1000 / average):F0} fps";
             UpdateInspector();
         }
-        if (!smoke && now - saveTime > 60) { saveTime = now; _ = Save(); }
-        if (smoke && now > (perf ? 16 : 5) && !screenshotTaken)
+        if (smoke && !noDisplaySmoke && now > (perf ? 16 : 5) && !screenshotTaken)
         {
             screenshotTaken = true;
             var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
@@ -224,11 +241,93 @@ public partial class MainWindow : Window
         var child = world.Organisms.Where(o => o.ParentId == view.Selected?.Id || o.MateId == view.Selected?.Id).OrderByDescending(o => o.BirthTime).FirstOrDefault();
         if (child != null) { view.Select(child); view.Following = true; }
     }
+    private void NoDisplayClick(object sender, RoutedEventArgs e)
+    {
+        StopWandering(); view.CancelNavigation();
+        runner.NoDisplay = true;
+        UpdateWakeRequest();
+        CompositionTarget.Rendering -= Frame;
+        SimulationView.Visibility = Visibility.Collapsed;
+        NoDisplayPanel.Visibility = Visibility.Visible;
+        WanderButton.IsEnabled = WaterButton.IsEnabled = OverviewButton.IsEnabled = false;
+        NoDisplayStatus.Text = paused ? "Paused" : "Running at maximum throughput";
+        RenderLabel.Text = "Display off";
+    }
+    private void ShowDisplayClick(object sender, RoutedEventArgs e)
+    {
+        runner.NoDisplay = false;
+        UpdateWakeRequest();
+        NoDisplayPanel.Visibility = Visibility.Collapsed;
+        SimulationView.Visibility = Visibility.Visible;
+        WanderButton.IsEnabled = WaterButton.IsEnabled = OverviewButton.IsEnabled = true;
+        previous = clock.Elapsed.TotalSeconds; lastViewportUpdate = 0;
+        CompositionTarget.Rendering -= Frame;
+        CompositionTarget.Rendering += Frame;
+    }
+    private async void Maintenance(object? sender, EventArgs e)
+    {
+        if (closingStarted || changingWorld) return;
+        double now = clock.Elapsed.TotalSeconds;
+        // This timer also runs when the viewport is hidden or the window is minimized.
+        if (!smoke && now - saveTime > 60) { saveTime = now; _ = Save(); }
+        if (runner.NoDisplay)
+        {
+            if (runner.Error != null) UpdateWakeRequest();
+            var status = runner.Status;
+            Population.Text = status.Population.ToString("N0"); Generation.Text = status.Generation.ToString();
+            Elapsed.Text = $"{(int)(status.Time / 3600):00}:{(int)(status.Time / 60) % 60:00}:{(int)status.Time % 60:00}";
+            SpeedLabel.Text = paused ? "Paused" : $"Max / {status.Speed:F1}x actual";
+            SpeedLabel.Foreground = new SolidColorBrush(Color.FromRgb(136, 166, 154));
+            SpeedLabel.ToolTip = "Display is off; simulation runs without a speed cap. Pause and autosave remain available.";
+            NoDisplayStatus.Text = runner.Error != null ? "Simulation stopped: " + runner.Error
+                : paused ? "Paused" : status.Population == 0 ? "Population extinct. Environment continues running." : "Running at maximum throughput";
+            if (wakeFailed) NoDisplayStatus.Text += " / Could not prevent sleep";
+        }
+        if (displayBenchmark && now > 2 && !displayBenchmarkStarted)
+        {
+            displayBenchmarkStarted = true;
+            displayBenchmarkTime = await runner.ReadTimeAsync(); displayBenchmarkAt = clock.Elapsed.TotalSeconds;
+        }
+        if (displayBenchmark && now > 14 && !displayBenchmarkFinished)
+        {
+            displayBenchmarkFinished = true;
+            double end = await runner.ReadTimeAsync();
+            File.WriteAllText("display-benchmark.txt", $"Mode={(runner.NoDisplay ? "off" : "reduced")} average={(end - displayBenchmarkTime) / (clock.Elapsed.TotalSeconds - displayBenchmarkAt):F2}x");
+            if (runner.NoDisplay) ShowDisplayClick(this, new());
+            return;
+        }
+        if (displayBenchmark && displayBenchmarkFinished && now > 15) { Close(); return; }
+        if (!displayBenchmark && noDisplaySmoke && now > 5 && !noDisplaySmokeRestored)
+        {
+            if (runner.Status.Time <= noDisplaySmokeStarted || runner.Error != null) throw new InvalidOperationException("No-display simulation failed");
+            File.WriteAllText("no-display-check.txt", $"Advanced {runner.Status.Time - noDisplaySmokeStarted:F1} seconds; {runner.Status.Speed:F1}x actual; restoring display.");
+            var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var file = File.Create("preview-no-display.png")) encoder.Save(file);
+            ShowDisplayClick(this, new()); noDisplaySmokeRestored = true;
+        }
+        if (noDisplaySmoke && noDisplaySmokeRestored && now > 8)
+        {
+            if (runner.Snapshot.Time <= noDisplaySmokeStarted) throw new InvalidOperationException("Display snapshot did not resume");
+            Close();
+        }
+    }
+
+    private void KeepAwakeChanged(object sender, RoutedEventArgs e) { if (runner != null) UpdateWakeRequest(); }
+    private void UpdateWakeRequest()
+    {
+        bool wanted = !smoke && !closingStarted && runner.Error == null && runner.NoDisplay && !paused && KeepAwakeBox.IsChecked == true;
+        if (wanted == wakeRequested) return;
+        // Keep the system running; the monitor may still turn off normally.
+        wakeFailed = SetThreadExecutionState(wanted ? 0x80000001u : 0x80000000u) == 0;
+        wakeRequested = wanted;
+    }
+
     private void ReducedDisplayChanged(object sender, RoutedEventArgs e)
     {
         if (runner != null) runner.ReducedDisplay = ReducedDisplayBox.IsChecked == true;
     }
-    private void PauseClick(object sender, RoutedEventArgs e) { paused = !paused; runner.Speed = paused ? 0 : speed; PauseButton.Content = paused ? "▶  Resume" : "Ⅱ  Pause"; }
+    private void PauseClick(object sender, RoutedEventArgs e) { paused = !paused; runner.Speed = paused ? 0 : speed; PauseButton.Content = paused ? "▶  Resume" : "Ⅱ  Pause"; UpdateWakeRequest(); }
     private void SpeedClick(object sender, RoutedEventArgs e)
     {
         var chosen = (Button)sender;
@@ -246,7 +345,12 @@ public partial class MainWindow : Window
     private void WanderClick(object sender, RoutedEventArgs e) { wandering = !wandering; WanderButton.Content = wandering ? "Wandering" : "Wander"; lastWander = -100; if (!wandering) view.Following = false; }
     private void WaterClick(object sender, RoutedEventArgs e) { view.ShowWater = !view.ShowWater; WaterButton.Content = view.ShowWater ? "O₂ map on" : "O₂ map"; }
     private async void SaveClick(object sender, RoutedEventArgs e) => await Save();
-    private async Task Save()
+    private Task Save()
+    {
+        if (saveOperation is { IsCompleted: false }) return saveOperation;
+        return saveOperation = SaveCore();
+    }
+    private async Task SaveCore()
     {
         if (!saveAllowed) { SaveLabel.Text = "Save disabled · unreadable file preserved"; return; }
         try { await runner.SaveAsync(); SaveLabel.Text = "Saved " + DateTime.Now.ToString("HH:mm"); }
@@ -267,12 +371,18 @@ public partial class MainWindow : Window
     {
         if (closingComplete) return;
         e.Cancel = true; if (closingStarted) return;
-        closingStarted = true; IsEnabled = false; CompositionTarget.Rendering -= Frame;
-        if (!smoke) await Save();
+        closingStarted = true; IsEnabled = false; maintenanceTimer.Stop(); CompositionTarget.Rendering -= Frame;
+        runner.Speed = 0; UpdateWakeRequest();
+        if (!smoke)
+        {
+            if (saveOperation is { IsCompleted: false }) await saveOperation;
+            await SaveCore();
+        }
         await runner.StopAsync(); closingComplete = true; Close();
     }
     private void OnKey(object sender, KeyEventArgs e)
     {
+        if (runner.NoDisplay && e.Key != Key.Space) return;
         if (view.SetNavigationKey(e.Key, true)) { e.Handled = true; return; }
         if (e.IsRepeat) return;
         if (e.Key == Key.Space) { PauseClick(this, new()); e.Handled = true; }
