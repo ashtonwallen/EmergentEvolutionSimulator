@@ -40,6 +40,7 @@ public partial class MainWindow : Window
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-shoreline")) File.Copy(World.SavePath, World.SavePath + ".pre-shoreline");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-coordination")) File.Copy(World.SavePath, World.SavePath + ".pre-coordination");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-tissue-ecology")) File.Copy(World.SavePath, World.SavePath + ".pre-tissue-ecology");
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-wiring")) File.Copy(World.SavePath, World.SavePath + ".pre-wiring");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-moisture")) File.Copy(World.SavePath, World.SavePath + ".pre-moisture");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-pressures")) File.Copy(World.SavePath, World.SavePath + ".pre-pressures");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-branching")) File.Copy(World.SavePath, World.SavePath + ".pre-branching");
@@ -192,7 +193,7 @@ public partial class MainWindow : Window
         if (g.Buds != null)
         {
             int roots = g.Buds.Count(b => b.Parent < 0), forks = g.Buds.Where(b => b.Parent >= 0).GroupBy(b => b.Parent).Count(group => group.Count() > 1);
-            Traits.Text += $"\nATTACHMENT SITES   {roots}\nTISSUE PIECES   {o.BudStates.Count(b => b.Growth > .05)} / {g.Buds.Count}\nBRANCH POINTS   {forks}";
+            Traits.Text += $"\nATTACHMENT SITES   {roots}\nTISSUE PIECES   {o.BudStates.Count(b => b.Growth > .05)} / {g.Buds.Count}\nBRANCH POINTS   {forks}\nSIGNAL CONNECTIONS   {g.Buds.Sum(b => b.Wires.Count)}";
             if (o.BudStates.Count > 0) Traits.Text += $"\nLOCAL RESPONSE   {o.BudStates.Average(b => Math.Abs(b.Activation)):F2}";
         }
         Traits.Text += $"\nTISSUE HEALTH   {o.Body.Average(c => c.Integrity):P0}\nANCHORING   {o.Anchoring:F2}\nLOCAL CURRENT   {world.FlowAt(o.Center).Length:F1}";

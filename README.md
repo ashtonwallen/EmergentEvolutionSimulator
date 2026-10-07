@@ -169,6 +169,17 @@ Attached mats respond to tangential scraping, tissue stiffness and taper. Suspen
 
 Forty-nine additional rocks form broken pockets across deep water, shallows and shore, adding differently sized gaps, current shelter and damp refuges. Existing channels, tides and pools remain. Save format 8 adds the rocks once without replacing organisms or moisture fields; the app backs up the previous save as `ecosystem.json.pre-tissue-ecology`.
 
-Backlog: ancestry comparison viewer (deferred at user request); evolvable neural connections and duplication of coordinated developmental structures.
+Backlog: ancestry comparison viewer (deferred at user request).
 
 Validation: Release build/publish, focused mechanics checks, a five-minute seed-149 simulation and deterministic save/resume passed. Packaged fresh-world and copied-existing-population smoke runs exited successfully. The ancestry viewer remains deferred.
+
+
+## Evolving wiring and repeated structures
+
+Each tissue can inherit incoming weighted signal connections from any other tissue, including itself. Mutations add, remove, reconnect, or adjust these links and their blend of immediate versus remembered activity. All sources are sampled before destinations update, so feedback cannot exploit iteration order. Absent or severed tissues cannot transmit; active links cost energy according to strength and physical length. Existing populations and founders start with no extra wiring. The existing local reflex network remains available.
+
+An offspring mutation can duplicate a whole branch and all descendants together, retaining their proportions, muscle timing, development, sensors and wiring. Internal links remap to the copied tissues; external inputs and outputs are preserved. The copied root changes attachment position or angle without imposing bilateral symmetry or a limb count. Later mutations can differentiate the copies. Removing a tissue drops its incident signal links and remaps surviving indices. Sexual reproduction inherits the tissue graph and its wiring together from one parent, alongside recombination of other traits.
+
+The shared 128-node anatomy budget and a 512-link computation budget bound runtime; neither awards survival benefits. Copies still develop gradually and pay growth, tissue and signaling costs. No adult genome is edited, no gait or prey pursuit is scripted, and greater complexity is not guaranteed. Wiring serializes with the genome; existing runtime signal and memory fields continue to save normally. First launch preserves `ecosystem.json.pre-wiring`.
+
+Validation: focused checks cover inhibitory and recurrent signaling, simultaneous source reads, severed-source gating, internal/external connection remapping, deep copies, deletion, size budgets, 600 offspring mutation/recombination rounds, and saved wiring. A five-minute seed-149 simulation and deterministic save/resume passed.

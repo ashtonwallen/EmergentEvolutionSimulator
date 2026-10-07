@@ -63,7 +63,8 @@ public sealed class BudGene
         }
         return projection.Direction;
     }
-    public BudGene Copy() => (BudGene)MemberwiseClone();
+    public List<SignalWire> Wires { get; set; } = [];
+    public BudGene Copy() { var b = (BudGene)MemberwiseClone(); b.Wires = Wires.Select(w => w.Copy()).ToList(); return b; }
 }
 
 // Development and local reflex state are separate from the inherited recipe.
@@ -88,7 +89,7 @@ public sealed class BudState
 
 public readonly record struct BudPose(V Root, V Joint, V Tip, double Radius, double Flatness, int Anchor, bool Active);
 
-public static class Branching
+public static partial class Branching
 {
     private static double Dot(V a, V b) => a.X * b.X + a.Y * b.Y + a.Z * b.Z;
     private static V Cross(V a, V b) => new(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
@@ -121,10 +122,11 @@ public static class Branching
     public static bool Valid(Genome g)
     {
         if (g.Buds == null) return true;
-        if (g.Buds.Count + g.Cells > Development.NodeBudget) return false;
+        if (g.Buds.Count + g.Cells > Development.NodeBudget || g.Buds.Any(b => b.Wires == null) || g.Buds.Sum(b => b.Wires.Count) > WireBudget) return false;
         for (int i = 0; i < g.Buds.Count; i++)
         {
             var b = g.Buds[i];
+            if (b.Wires.Any(w => w == null || w.Source < 0 || w.Source >= g.Buds.Count || !double.IsFinite(w.Weight + w.MemoryMix) || Math.Abs(w.Weight) > 2 || w.MemoryMix < 0 || w.MemoryMix > 1)) return false;
             if (b.Parent < -1 || b.Parent >= i || b.AnchorCell < 0 || b.AnchorCell >= g.Cells || !double.IsFinite(b.Length + b.Width + b.Flatness + b.Turn + b.Elevation + b.AnchorAngle + b.AnchorPitch + b.Muscle + b.Phase + b.Frequency + b.Coupling + b.Stiffness + b.TouchResponse + b.FoodResponse + b.LightResponse + b.Digestion + b.Photo + b.Adhesion + b.Delay + b.Maturation + b.Taper + b.ChildCoupling + b.StretchResponse + b.SignalDelay + b.Toughness + b.Repair + b.NeighborCoupling + b.ContractionSense + b.PhaseResponse + b.MotorResponse + b.BendAmplitude + b.BendPhase + b.MemoryResponse + b.MemoryTime + b.RecurrentResponse + b.HungerResponse + b.SlipResponse + b.MoistureResponse + b.Permeability) || b.MemoryTime <= 0 || b.Permeability < 0 || b.Permeability > 1 || b.Length <= 0 || b.Width <= 0 || b.Flatness <= 0 || b.Maturation <= 0) return false;
         }
         return true;
@@ -187,19 +189,19 @@ public static class Branching
             if (b.Parent < 0) { b.AnchorAngle = r.NextDouble() * Math.Tau; b.AnchorCell = (int)(r.NextDouble() * g.Cells); b.AnchorPitch = (r.NextDouble() - .5) * 2; }
             b.Turn += (r.NextDouble() - .5) * 1.6; b.Phase += (r.NextDouble() - .5) * 2;
             b.Length *= .5 + r.NextDouble() * .6;
-            buds.Add(b);
+            if (buds.Sum(part => part.Wires.Count) + b.Wires.Count <= WireBudget) buds.Add(b);
         }
         if (buds.Count > 0 && r.NextDouble() < .08)
         {
-            int removed = (int)(r.NextDouble() * buds.Count), parent = buds[removed].Parent;
-            buds.RemoveAt(removed);
-            foreach (var b in buds) { if (b.Parent == removed) b.Parent = parent; else if (b.Parent > removed) b.Parent--; }
+            RemoveBud(g, (int)(r.NextDouble() * buds.Count));
         }
         if (buds.Count > 1 && r.NextDouble() < .08)
         {
             int i = 1 + (int)(r.NextDouble() * (buds.Count - 1));
             buds[i].Parent = (int)(r.NextDouble() * (i + 1)) - 1;
         }
+        if (buds.Count > 0 && r.NextDouble() < .07) DuplicateStructure(g, (int)(r.NextDouble() * buds.Count), r);
+        MutateWiring(g, r);
     }
 
     public static void Develop(Organism o, double dt)
@@ -301,6 +303,21 @@ public static class Branching
         Span<BudPose> poses = stackalloc BudPose[buds.Count];
         Span<BudPose> next = stackalloc BudPose[buds.Count];
         Poses(o, o.Age, poses, w.WaterLevel); Poses(o, o.Age + dt, next, w.WaterLevel);
+        // Read every source before updating any destination: recurrence has a real one-step delay.
+        Span<double> wiredInputs = stackalloc double[buds.Count]; wiredInputs.Clear();
+        for (int i = 0; i < buds.Count; i++)
+        {
+            if (!poses[i].Active) continue;
+            foreach (var wire in buds[i].Wires)
+            {
+                if (!poses[wire.Source].Active) continue;
+                var source = o.BudStates[wire.Source];
+                wiredInputs[i] += wire.Weight * (signals[wire.Source] * (1 - wire.MemoryMix) + source.Memory * wire.MemoryMix)
+                    * source.Integrity;
+                double distance = (poses[i].Joint - poses[wire.Source].Joint).Length / Math.Max(1, o.Genes.Radius);
+                o.Energy -= dt * (.001 + distance * .0003 + Math.Abs(wire.Weight) * .001);
+            }
+        }
         V free = freeMotion ?? new V();
         double bodyDrag = 1 + o.Body.Count * .65, torque = 0;
         Resistance resistance = Resistance.Isotropic(bodyDrag);
@@ -386,7 +403,7 @@ public static class Branching
             double peers = 0;
             if (b.Parent < 0 && b.AnchorCell < o.Body.Count && anchorCounts[b.AnchorCell] > 1)
                 peers = (anchorSignals[b.AnchorCell] - signals[i]) / (anchorCounts[b.AnchorCell] - 1);
-            double input = b.TouchResponse * (state.Contact ? 1 : 0) + b.FoodResponse * food + b.LightResponse * light + b.StretchResponse * state.Stretch
+            double input = wiredInputs[i] + b.TouchResponse * (state.Contact ? 1 : 0) + b.FoodResponse * food + b.LightResponse * light + b.StretchResponse * state.Stretch
                 + (b.Parent >= 0 ? signals[b.Parent] * b.Coupling : 0) + (count > 0 ? children / count * b.ChildCoupling : 0) + peers * b.NeighborCoupling
                 + b.MemoryResponse * state.Memory + b.RecurrentResponse * state.Signal
                 + b.HungerResponse * (1 - Math.Clamp(o.Energy / o.Capacity, 0, 1))

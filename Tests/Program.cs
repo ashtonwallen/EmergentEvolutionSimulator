@@ -303,6 +303,53 @@ newHabitat.Save(habitatSave);
 Require(World.Load(habitatSave).Rocks.Count == newHabitat.Rocks.Count, "Habitat pockets duplicated on reload");
 File.Delete(habitatSave);
 Console.WriteLine("PASS: sensory memory, immutable genes, mechanical feeding, one-time habitat migration and saved memory");
+// Arbitrary cross-body signaling, synchronous feedback and absent-source gating.
+var wired = Passive();
+wired.Genes.Buds!.Add(new BudGene { Length = 1, Muscle = 0, AnchorAngle = 2, Wires = [new SignalWire { Source = 0, Weight = -1 }] });
+wired.Genes.Buds[0].Wires.Add(new SignalWire { Source = 1, Weight = 1 });
+wired.BudStates.Add(new BudState { Growth = 1, FormedAt = 0 });
+wired.BudStates[0].Signal = 1;
+string wiredGenes = System.Text.Json.JsonSerializer.Serialize(wired.Genes);
+Branching.Solve(stillWater, wired, .1, []);
+Require(wired.BudStates[1].Signal < 0, "Distant inhibitory wire did not transmit");
+Require(Math.Abs(wired.BudStates[0].Signal - .6) < 1e-9, "Feedback read an already updated source");
+Require(System.Text.Json.JsonSerializer.Serialize(wired.Genes) == wiredGenes, "Wiring activity mutated genes");
+wired.BudStates[0].Integrity = 0; wired.BudStates[1].Signal = 0; wired.BudStates[1].Activation = 0;
+Branching.Solve(stillWater, wired, .1, []);
+Require(wired.BudStates[1].Signal == 0, "Severed source transmitted a stale signal");
+var module = new Genome { Cells = 1, Buds = [
+    new BudGene { Wires = [new SignalWire { Source = 2, Weight = .7 }] },
+    new BudGene { Wires = [new SignalWire { Source = 0, Weight = -.4 }] },
+    new BudGene { Parent = 1, Phase = .9, Wires = [new SignalWire { Source = 1, Weight = .6, MemoryMix = .3 }] },
+    new BudGene { Parent = 1, Turn = -.8 }
+] };
+string originalModule = System.Text.Json.JsonSerializer.Serialize(module);
+var copiedModule = module.Copy();
+Require(Branching.DuplicateStructure(copiedModule, 1, new Random(41)), "Whole branch did not duplicate");
+Require(copiedModule.Buds!.Count == 7 && copiedModule.Buds[5].Parent == 4 && copiedModule.Buds[6].Parent == 4
+    && copiedModule.Buds[5].Phase == .9 && copiedModule.Buds[5].Wires[0].Source == 4
+    && copiedModule.Buds[4].Wires[0].Source == 0 && copiedModule.Buds[0].Wires[1].Source == 5,
+    "Duplication lost coordinated anatomy or incoming/internal/outgoing wiring");
+copiedModule.Buds[5].Wires[0].Weight = -1;
+Require(System.Text.Json.JsonSerializer.Serialize(module) == originalModule, "Duplication shares mutable wiring with its parent");
+Branching.RemoveBud(copiedModule, 1);
+Require(Branching.Valid(copiedModule) && copiedModule.Buds[4].Wires[0].Source == 3, "Deletion corrupted wiring indices");
+var fullModule = module.Copy(); fullModule.Cells = Development.NodeBudget - fullModule.Buds!.Count;
+Require(!Branching.DuplicateStructure(fullModule, 1, new Random(3)), "Duplication exceeded anatomy budget");
+var wiringRandom = new Random(291);
+var descendant = module.Copy();
+for (int i = 0; i < 600; i++)
+{
+    descendant = descendant.Offspring(wiringRandom, i % 3 == 0 ? module : null);
+    Require(Branching.Valid(descendant), "Mutation/recombination corrupted neural or anatomical topology");
+}
+Require(System.Text.Json.JsonSerializer.Serialize(module) == originalModule, "Reproduction mutated parent wiring");
+var wireSave = Path.Combine(Path.GetTempPath(), "tideglass-wiring-" + Guid.NewGuid() + ".json");
+var wireWorld = World.Create(29); wireWorld.Organisms.Clear(); wireWorld.Organisms.Add(wired);
+wireWorld.Save(wireSave);
+Require(System.Text.Json.JsonSerializer.Serialize(World.Load(wireSave).Organisms[0].Genes) == wiredGenes, "Wiring did not survive save/load");
+File.Delete(wireSave);
+Console.WriteLine("PASS: synchronous recurrent wiring, inhibition, severed-source gating, module duplication, deletion, budgets, inheritance and saves");
 if (args.Length > 0 && args[0] == "--mechanics-only") return;
 
 var world = World.Create(args.Length > 0 ? int.Parse(args[0]) : 731);
