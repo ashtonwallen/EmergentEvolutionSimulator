@@ -183,3 +183,16 @@ An offspring mutation can duplicate a whole branch and all descendants together,
 The shared 128-node anatomy budget and a 512-link computation budget bound runtime; neither awards survival benefits. Copies still develop gradually and pay growth, tissue and signaling costs. No adult genome is edited, no gait or prey pursuit is scripted, and greater complexity is not guaranteed. Wiring serializes with the genome; existing runtime signal and memory fields continue to save normally. First launch preserves `ecosystem.json.pre-wiring`.
 
 Validation: focused checks cover inhibitory and recurrent signaling, simultaneous source reads, severed-source gating, internal/external connection remapping, deep copies, deletion, size budgets, 600 offspring mutation/recombination rounds, and saved wiring. A five-minute seed-149 simulation and deterministic save/resume passed.
+
+
+## Additional throughput improvements
+
+Body-rock collisions use spatial candidates while preserving the original rock order, including re-querying when a collision pushes a body across grid buckets. Grazing reuses confirmed contact. A summed occupancy grid rejects empty carcass searches. The paired appendage poses reuse unchanged tissue dimensions, muscle strength and root coordinate frames; moving child frames are still recomputed. Tide/daylight values are computed once per ecosystem time, and unused food sensors skip their sampling work.
+
+Neighborhood searches, temperature factors and pre-interaction anatomy preparation share one parallel stage. Feeding, damage, movement application and reproduction remain ordered: parallelizing these directly would change the simulated interactions. Worker snapshots omit simulation-only grids and neighbor lists, preallocate collections, and retain independent mutable tissue states. Physics still uses the same fixed 0.1-second step; no off-screen organisms are skipped.
+
+The optional **Reduce display work** checkbox limits population snapshots to 2 Hz, environment snapshots to 1 Hz and viewport updates to at most 10 fps while speed is above 1x. Pause and 1x restore normal update rates. This trades visual smoothness for simulation throughput without changing physics or survival rules.
+
+On one frozen saved-population fixture (626 survivors after 310 steps), three alternating baseline/optimized headless runs gave median tick times of 11.915 / 10.384 ms, about 15% more throughput. Checkpoints were byte-identical before/after and with one versus eight workers. Average allocated bytes per display snapshot fell from 1,721,307 to 1,528,971 (about 11%); tick allocation was essentially unchanged. Snapshot allocation measurements cover the calling thread.
+
+Separate 16-second packaged-app runs from the same starting save measured final achieved speeds of 11.97x baseline, 11.69x optimized normal display, and 13.77x reduced display at a 20x request. These short live readings fluctuate and end with different populations because they advance different amounts of simulated time; they are not guarantees. Normal-display improvement was not established by this app check. Release build/publish, ordered collision comparisons, a five-minute survival run, deterministic save/resume, and both display-mode smoke checks passed.

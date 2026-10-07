@@ -18,6 +18,7 @@
   <Grid Grid.Row="1" ClipToBounds="True">
    <Border x:Name="ViewportHost"/>
    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26" Background="#C00A2024" CornerRadius="6" Padding="14,10" IsHitTestVisible="False"><StackPanel><TextBlock x:Name="HabitatLabel" Text="Nutrient-fed water · primitive founders" FontSize="11" Foreground="#89A9A1" Margin="0,5,0,0"/><TextBlock x:Name="WaterLabel" Foreground="#89A9A1" FontSize="11" Margin="0,5,0,0"/></StackPanel></Border>
+   <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,185,0,0"><CheckBox x:Name="ReducedDisplayBox" Content="Reduce display work" Foreground="#C2D7CC" ToolTip="At speeds above 1?, update the view less often to leave more CPU time for simulation." Checked="ReducedDisplayChanged" Unchecked="ReducedDisplayChanged"/></StackPanel>
    <Button Content="Visit the shoreline" Click="CoastClick" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,145,0,0" Padding="14,8"/>
    <Border x:Name="Inspector" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Width="260" Margin="0,26,26,0" Background="#ED0C2328" BorderBrush="#395653" BorderThickness="1" CornerRadius="8" Padding="20">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>

@@ -34,6 +34,13 @@ if (args.Length > 0 && args[0] == "--benchmark")
     for (int i = 0; i < 300; i++) benchmark.Step(.1);
     watch.Stop();
     long tickAllocations = GC.GetAllocatedBytesForCurrentThread() - allocations;
+    var snapshot = benchmark.Snapshot();
+    long snapshotAllocation = GC.GetAllocatedBytesForCurrentThread();
+    var snapshotWatch = Stopwatch.StartNew();
+    for (int n = 0; n < 100; n++) snapshot = benchmark.Snapshot(snapshot, n % 4 == 0);
+    snapshotWatch.Stop();
+    long snapshotBytes = GC.GetAllocatedBytesForCurrentThread() - snapshotAllocation;
+    Console.WriteLine($"SNAPSHOT ms={snapshotWatch.Elapsed.TotalMilliseconds / 100:F3} allocated={snapshotBytes / 100:N0}");
     if (args.Length > 2) benchmark.Save(args[2]);
     Console.WriteLine($"BENCHMARK population={benchmark.Organisms.Count} cells={benchmark.Organisms.Sum(o=>o.Body.Count)} ms/step={watch.Elapsed.TotalMilliseconds / 300:F3} allocated/step={tickAllocations / 300:N0}");
     return;
@@ -350,6 +357,31 @@ wireWorld.Save(wireSave);
 Require(System.Text.Json.JsonSerializer.Serialize(World.Load(wireSave).Organisms[0].Genes) == wiredGenes, "Wiring did not survive save/load");
 File.Delete(wireSave);
 Console.WriteLine("PASS: synchronous recurrent wiring, inhibition, severed-source gating, module duplication, deletion, budgets, inheritance and saves");
+// Spatial pruning must retain the full ordered collision result, including pushes across bins.
+var collisionWorld = new World();
+var collisionRandom = new Random(772);
+for (int n = 0; n < 70; n++) collisionWorld.Rocks.Add(new Rock
+{
+    Position = new(200 + collisionRandom.NextDouble() * 200, 200 + collisionRandom.NextDouble() * 200, 30 + collisionRandom.NextDouble() * 70),
+    Radius = 10 + collisionRandom.NextDouble() * 70
+});
+for (int n = 0; n < 1200; n++)
+{
+    V position = new(150 + collisionRandom.NextDouble() * 300, 150 + collisionRandom.NextDouble() * 300, collisionRandom.NextDouble() * 140);
+    double radius = 1 + collisionRandom.NextDouble() * 95;
+    V expected = position;
+    foreach (var rock in collisionWorld.Rocks)
+    {
+        V diff = expected - rock.Position; double limit = rock.Radius + radius;
+        if (diff.LengthSquared < limit * limit)
+        {
+            double length = diff.Length;
+            expected = rock.Position + (length > .001 ? diff * (1 / length) : new V(1,0)) * limit;
+        }
+    }
+    Require((collisionWorld.ResolveRockCollisions(position, radius) - expected).Length == 0, "Spatial pruning changed ordered collisions");
+}
+Console.WriteLine("PASS: spatial rock pruning matches full ordered collisions across bucket boundaries");
 if (args.Length > 0 && args[0] == "--mechanics-only") return;
 
 var world = World.Create(args.Length > 0 ? int.Parse(args[0]) : 731);

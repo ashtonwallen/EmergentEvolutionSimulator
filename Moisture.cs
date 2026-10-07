@@ -2,8 +2,8 @@ namespace Tideglass;
 
 public sealed partial class World
 {
-    public double[] SoilMoisture { get; set; } = new double[Cols * Rows];
-    public double[] SurfaceWater { get; set; } = new double[Cols * Rows];
+    public double[] SoilMoisture { get; set; } = [];
+    public double[] SurfaceWater { get; set; } = [];
     [System.Text.Json.Serialization.JsonIgnore] public double Rain => Math.Clamp((Math.Sin((Time + 90) * Math.Tau / 900) - .78) / .22, 0, 1);
     private double[]? waterCapacity, moistureShelter, runoff;
 
@@ -55,7 +55,7 @@ public sealed partial class World
     private void UpdateMoisture(double dt)
     {
         PrepareMoistureTerrain();
-        double rain = Rain, sunlight = Shoreline.Daylight(Time);
+        double rain = Rain, sunlight = Daylight;
         Array.Clear(runoff!);
         for (int y = 0; y < Rows; y++) for (int x = 0; x < Cols; x++)
         {
@@ -125,7 +125,7 @@ public sealed partial class World
         double shelter = moistureShelter![SurfaceTile(p)] * Math.Exp(-Math.Max(0, p.Z - Ground(p.X, p.Y)) / 30);
         double humidity = SoilMoisture[SurfaceTile(p)] * Math.Exp(-Math.Max(0, p.Z - Ground(p.X, p.Y)) / 22);
         double drying = .010 * area / storage * (1 - g.Waterproofing * .92) * (1 - shelter * .65) * (1 - humidity * .5)
-            * (.65 + Shoreline.Daylight(Time) * .35) * (1 - Rain * .8);
+            * (.65 + Daylight * .35) * (1 - Rain * .8);
         o.Hydration = Math.Clamp(o.Hydration + dt * (wet * .12 * (1 - g.Waterproofing * .65) - (1 - wet) * drying), 0, 1);
     }
 }

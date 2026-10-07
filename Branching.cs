@@ -222,7 +222,12 @@ public static partial class Branching
         }
     }
 
+    private readonly record struct PoseBasis(double Radius, double Muscle, double Length, V Root, V Axis, V Sideways, V Vertical);
+
     public static void Poses(Organism o, double age, Span<BudPose> poses, double waterLevel = double.MaxValue)
+        => Poses(o, age, poses, waterLevel, [], false);
+
+    private static void Poses(Organism o, double age, Span<BudPose> poses, double waterLevel, Span<PoseBasis> basis, bool reuse)
     {
         var buds = o.Genes.Buds!;
         V forward = V.Direction(o.Heading, o.Pitch), side = new(-Math.Sin(o.Heading), Math.Cos(o.Heading), 0);
@@ -235,9 +240,10 @@ public static partial class Branching
             if (i >= o.BudStates.Count || o.BudStates[i].Growth <= 0 || o.BudStates[i].Integrity <= .02 || (b.Parent >= 0 ? !poses[b.Parent].Active : b.AnchorCell >= o.Body.Count)) { poses[i] = default; continue; }
             var state = o.BudStates[i];
             int anchor = b.Parent >= 0 ? poses[b.Parent].Anchor : b.AnchorCell;
-            double radius = o.Genes.CellRadius(anchor), growth = state.Growth;
+            double radius = reuse ? basis[i].Radius : o.Genes.CellRadius(anchor), growth = state.Growth;
             V axis, root;
             if (b.Parent >= 0) { var parent = poses[b.Parent]; root = parent.Tip; axis = Unit(parent.Tip - parent.Root); }
+            else if (reuse) { axis = basis[i].Axis; root = basis[i].Root; }
             else
             {
                 V localAxis = b.AnchorDirection();
@@ -246,15 +252,21 @@ public static partial class Branching
                 double skinRadius = radius / Math.Sqrt(along * along + lateral * lateral + height * height);
                 root = o.Body[anchor].Position + axis * (skinRadius * .94);
             }
-            V sideways = Unit(Cross(new V(0, 0, 1), axis));
-            if (sideways.Length < .5) sideways = side;
-            V vertical = Unit(Cross(axis, sideways));
+            V sideways, vertical;
+            if (reuse && b.Parent < 0) { sideways = basis[i].Sideways; vertical = basis[i].Vertical; }
+            else
+            {
+                sideways = Unit(Cross(new V(0, 0, 1), axis));
+                if (sideways.Length < .5) sideways = side;
+                vertical = Unit(Cross(axis, sideways));
+            }
             double phase = phaseBase * b.Frequency + o.Phase + b.Phase + state.PhaseOffset + (age - o.Age) * state.PhaseRate;
-            double muscle = b.Muscle * contraction * state.Integrity * reserves
+            double muscle = reuse ? basis[i].Muscle : b.Muscle * contraction * state.Integrity * reserves
                 * Math.Clamp(1 + b.MotorResponse * state.Activation, 0, 2) / (1 + state.Load * (1 - b.Stiffness) * .3);
             double turn = b.Turn + Math.Sin(phase) * muscle * .65 + state.Activation * muscle * .35;
             double pitch = b.Elevation + Math.Sin(phase + b.BendPhase) * muscle * b.BendAmplitude;
-            double length = radius * b.Length * growth;
+            double length = reuse ? basis[i].Length : radius * b.Length * growth;
+            if (!reuse && basis.Length > 0) basis[i] = new(radius, muscle, length, root, axis, sideways, vertical);
             V direction = axis * (Math.Cos(turn) * Math.Cos(pitch)) + sideways * (Math.Sin(turn) * Math.Cos(pitch)) + vertical * Math.Sin(pitch);
             double dry = Math.Clamp((root.Z - waterLevel + radius) / (radius * 2), 0, 1);
             V sag = new(0, 0, -dry * (1 - b.Stiffness) * length * length / (radius * 8));
@@ -283,7 +295,7 @@ public static partial class Branching
         Span<int> anchorCounts = stackalloc int[o.Body.Count];
         childSignals.Clear(); childCounts.Clear(); anchorSignals.Clear(); anchorCounts.Clear();
         V center = o.Center;
-        double daylight = Shoreline.Daylight(w.Time) / (1 + (neighbors?.Count ?? 0) * .12);
+        double daylight = w.Daylight / (1 + (neighbors?.Count ?? 0) * .12);
         for (int n = 0; n < buds.Count; n++)
         {
             var state = o.BudStates[n];
@@ -302,7 +314,9 @@ public static partial class Branching
         }
         Span<BudPose> poses = stackalloc BudPose[buds.Count];
         Span<BudPose> next = stackalloc BudPose[buds.Count];
-        Poses(o, o.Age, poses, w.WaterLevel); Poses(o, o.Age + dt, next, w.WaterLevel);
+        Span<PoseBasis> basis = stackalloc PoseBasis[buds.Count];
+        Poses(o, o.Age, poses, w.WaterLevel, basis, false);
+        Poses(o, o.Age + dt, next, w.WaterLevel, basis, true);
         // Read every source before updating any destination: recurrence has a real one-step delay.
         Span<double> wiredInputs = stackalloc double[buds.Count]; wiredInputs.Clear();
         for (int i = 0; i < buds.Count; i++)
@@ -397,8 +411,12 @@ public static partial class Branching
                     }
                 }
             // Local reflex changes activation, never the genotype or number of parts.
-            double food = Math.Clamp((w.FoodSignal(p.Tip, o.Genes) - w.FoodSignal(p.Root, o.Genes)) * .3, -1, 1);
-            food = Math.Clamp(food + w.FoodContactSignal(p.Tip) * .3, -1, 1);
+            double food = 0;
+            if (b.FoodResponse != 0)
+            {
+                food = Math.Clamp((w.FoodSignal(p.Tip, o.Genes) - w.FoodSignal(p.Root, o.Genes)) * .3, -1, 1);
+                food = Math.Clamp(food + w.FoodContactSignal(p.Tip) * .3, -1, 1);
+            }
             double children = childSignals[i]; int count = childCounts[i];
             double peers = 0;
             if (b.Parent < 0 && b.AnchorCell < o.Body.Count && anchorCounts[b.AnchorCell] > 1)

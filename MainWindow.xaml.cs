@@ -17,14 +17,14 @@ public partial class MainWindow : Window
     private readonly SpecimenView specimen;
     private readonly SimulationRunner runner;
     private readonly Stopwatch clock = Stopwatch.StartNew();
-    private double previous, uiTime, saveTime;
+    private double previous, uiTime, saveTime, lastViewportUpdate;
     private int speed = 1;
     private bool paused, hidden, screenshotTaken, saveAllowed = true;
     private readonly bool smoke = Environment.GetCommandLineArgs().Any(a => a.StartsWith("--smoke"));
     private readonly bool smokeDetail = Environment.GetCommandLineArgs().Contains("--smoke-detail");
     private bool detailSelected;
     private bool closingComplete, closingStarted, changingWorld;
-    private readonly bool perf = Environment.GetCommandLineArgs().Contains("--smoke-perf");
+    private readonly bool perf = Environment.GetCommandLineArgs().Any(a => a == "--smoke-perf" || a == "--smoke-reduced");
     private readonly bool smallSmoke = Environment.GetCommandLineArgs().Contains("--smoke-small");
     private readonly List<double> frameTimes = [];
     private readonly List<double> renderCosts = [];
@@ -78,6 +78,7 @@ public partial class MainWindow : Window
             world.Organisms.Add(o);
         }
         runner = new SimulationRunner(world);
+        if (Environment.GetCommandLineArgs().Contains("--smoke-reduced")) ReducedDisplayBox.IsChecked = true;
         world = runner.Snapshot;
         view = new Aquarium(world);
         specimen = new SpecimenView(view); SpecimenHost.Child = specimen;
@@ -105,6 +106,9 @@ public partial class MainWindow : Window
     {
         double now = clock.Elapsed.TotalSeconds;
         if (now == previous || changingWorld) return;
+        bool reduced = runner.ReducedDisplay && !paused && speed > 1;
+        if (reduced && now - lastViewportUpdate < .1) return;
+        lastViewportUpdate = now;
         double interval = now - previous; previous = now;
         var next = runner.Snapshot;
         if (!ReferenceEquals(world, next))
@@ -219,6 +223,10 @@ public partial class MainWindow : Window
     {
         var child = world.Organisms.Where(o => o.ParentId == view.Selected?.Id || o.MateId == view.Selected?.Id).OrderByDescending(o => o.BirthTime).FirstOrDefault();
         if (child != null) { view.Select(child); view.Following = true; }
+    }
+    private void ReducedDisplayChanged(object sender, RoutedEventArgs e)
+    {
+        if (runner != null) runner.ReducedDisplay = ReducedDisplayBox.IsChecked == true;
     }
     private void PauseClick(object sender, RoutedEventArgs e) { paused = !paused; runner.Speed = paused ? 0 : speed; PauseButton.Content = paused ? "▶  Resume" : "Ⅱ  Pause"; }
     private void SpeedClick(object sender, RoutedEventArgs e)

@@ -13,6 +13,8 @@ public sealed class SimulationRunner
     private readonly Task worker;
     private int requestedSpeed = 1;
     private double achievedSpeed;
+    private int reducedDisplay;
+    public bool ReducedDisplay { get => Volatile.Read(ref reducedDisplay) != 0; set => Volatile.Write(ref reducedDisplay, value ? 1 : 0); }
     public World Snapshot => Volatile.Read(ref snapshot);
     public int Speed { get => Volatile.Read(ref requestedSpeed); set => Volatile.Write(ref requestedSpeed, value); }
     public double AchievedSpeed => Volatile.Read(ref achievedSpeed);
@@ -26,7 +28,7 @@ public sealed class SimulationRunner
     {
         var clock = Stopwatch.StartNew();
         double previous = 0, nextPublish = 0, nextFields = 0, lastRate = 0, lastTime = live.Time, accumulator = 0;
-        int lastSpeed = Speed;
+        int lastSpeed = Speed; bool lastReduced = ReducedDisplay;
         try
         {
             while (!cancellation.IsCancellationRequested)
@@ -34,11 +36,12 @@ public sealed class SimulationRunner
                 while (commands.TryDequeue(out var command)) command();
                 double now = clock.Elapsed.TotalSeconds;
                 int speed = Speed;
-                if (speed != lastSpeed) { accumulator = 0; previous = now; lastSpeed = speed; }
+                if (speed != lastSpeed) { accumulator = 0; previous = now; lastSpeed = speed; nextPublish = 0; nextFields = 0; }
+                if (lastReduced != ReducedDisplay) { lastReduced = ReducedDisplay; nextPublish = 0; nextFields = 0; }
                 accumulator = speed == 0 ? 0 : Math.Min(accumulator + Math.Min(.1, now - previous) * speed, Math.Max(1, speed * .5));
                 previous = now;
-                var budget = Stopwatch.StartNew();
-                while (accumulator >= .1 && budget.ElapsedMilliseconds < (speed > 1 ? 24 : 8) && Speed > 0)
+                long budgetStart = Stopwatch.GetTimestamp();
+                while (accumulator >= .1 && Stopwatch.GetElapsedTime(budgetStart).TotalMilliseconds < (speed > 1 ? 24 : 8) && Speed > 0)
                 {
                     live.Step(.1); accumulator -= .1;
                 }
@@ -47,8 +50,9 @@ public sealed class SimulationRunner
                 {
                     bool fields = now >= nextFields;
                     Volatile.Write(ref snapshot, live.Snapshot(snapshot, fields));
-                    if (fields) nextFields = now + .25;
-                    nextPublish = now + (speed >= 20 ? .10 : .05);
+                    bool reduced = ReducedDisplay && speed > 1;
+                    if (fields) nextFields = now + (reduced ? 1 : .25);
+                    nextPublish = now + (reduced ? .5 : speed >= 20 ? .10 : .05);
                 }
                 if (now - lastRate >= 1)
                 {

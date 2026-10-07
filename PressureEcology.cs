@@ -20,14 +20,17 @@ public sealed partial class World
     private List<Rock>[]? rockMap;
     private List<Remains>?[] remainsBins = [];
     private readonly List<int> activeRemainsBins = [];
+    private int[] remainsOccupancy = [];
     private List<Rock> NearbyRocks(V p)
     {
         if (rockMap == null)
         {
             rockMap = new List<Rock>[Cols * Rows];
             for (int i = 0; i < rockMap.Length; i++) rockMap[i] = [];
+            int order = 0;
             foreach (var rock in Rocks)
             {
+                rock.CollisionOrder = order++;
                 double reach = rock.Radius + 64;
                 int x0 = Math.Clamp((int)((rock.Position.X - reach) / CellSize), 0, Cols - 1), x1 = Math.Clamp((int)((rock.Position.X + reach) / CellSize), 0, Cols - 1);
                 int y0 = Math.Clamp((int)((rock.Position.Y - reach) / CellSize), 0, Rows - 1), y1 = Math.Clamp((int)((rock.Position.Y + reach) / CellSize), 0, Rows - 1);
@@ -125,7 +128,10 @@ public sealed partial class World
         normal = new(0, 0, 1); touchedRock = null;
         foreach (var rock in radius <= 64 ? NearbyRocks(p) : Rocks)
         {
-            V d = p - rock.Position; double distance = d.Length;
+            V d = p - rock.Position;
+            double reach = rock.Radius + radius - penetration;
+            if (reach < 0 || Math.Abs(d.X) > reach || Math.Abs(d.Y) > reach || Math.Abs(d.Z) > reach) continue;
+            double distance = d.Length;
             double overlap = rock.Radius + radius - distance;
             if (overlap > penetration)
             {
@@ -133,6 +139,29 @@ public sealed partial class World
             }
         }
         return penetration > 0;
+    }
+
+    internal V ResolveRockCollisions(V position, double radius)
+    {
+        var candidates = radius <= 64 ? NearbyRocks(position) : Rocks;
+        int completed = -1;
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            var rock = candidates[i];
+            if (radius <= 64 && rock.CollisionOrder <= completed) continue;
+            V diff = position - rock.Position; double limit = rock.Radius + radius;
+            if (diff.LengthSquared >= limit * limit) continue;
+            double length = diff.Length;
+            position = rock.Position + (length > .001 ? diff * (1 / length) : new V(1, 0)) * limit;
+            if (radius <= 64)
+            {
+                // A collision can push into another bucket. Preserve original rock order.
+                completed = rock.CollisionOrder;
+                var next = NearbyRocks(position);
+                if (!ReferenceEquals(next, candidates)) { candidates = next; i = -1; }
+            }
+        }
+        return position;
     }
 
     public V VisibleContact(V p, double radius)
@@ -166,6 +195,17 @@ public sealed partial class World
             var bin = remainsBins[key] ??= [];
             if (bin.Count == 0) activeRemainsBins.Add(key);
             bin.Add(remains);
+        }
+        if (remainsOccupancy.Length == 0) remainsOccupancy = new int[(Cols + 1) * (Rows + 1)];
+        // Summed occupancy lets repeated branch queries reject empty rectangles in O(1).
+        for (int y = 0; y < Rows; y++)
+        {
+            int rowTotal = 0;
+            for (int x = 0; x < Cols; x++)
+            {
+                rowTotal += remainsBins[y * Cols + x]?.Count ?? 0;
+                remainsOccupancy[(y + 1) * (Cols + 1) + x + 1] = remainsOccupancy[y * (Cols + 1) + x + 1] + rowTotal;
+            }
         }
         for (int i = Clumps.Count - 1; i >= 0; i--)
         {
@@ -235,6 +275,11 @@ public sealed partial class World
         double result = 0;
         int x = Math.Clamp((int)(p.X / CellSize), 0, Cols - 1), y = Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1);
         int reach = (int)Math.Ceiling((radius + 30) / CellSize);
+        int x0 = Math.Max(0, x - reach), x1 = Math.Min(Cols, x + reach + 1);
+        int y0 = Math.Max(0, y - reach), y1 = Math.Min(Rows, y + reach + 1);
+        int stride = Cols + 1;
+        if (remainsOccupancy[y1 * stride + x1] - remainsOccupancy[y0 * stride + x1]
+            - remainsOccupancy[y1 * stride + x0] + remainsOccupancy[y0 * stride + x0] == 0) return 0;
         for (int yy = Math.Max(0, y - reach); yy <= Math.Min(Rows - 1, y + reach); yy++)
         for (int xx = Math.Max(0, x - reach); xx <= Math.Min(Cols - 1, x + reach); xx++)
         {

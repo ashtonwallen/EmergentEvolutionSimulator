@@ -196,7 +196,9 @@ public sealed class Organism
     [System.Text.Json.Serialization.JsonIgnore] public V BudMinimum, BudMaximum;
     public V Center { get { V p = new(); foreach (var c in Body) p += c.Position; return Body.Count == 0 ? p : p * (1.0 / Body.Count); } }
     [System.Text.Json.Serialization.JsonIgnore] public V StepCenter;
-    public Organism CopyForView() { var o = (Organism)MemberwiseClone(); o.PhysicalBuds = []; o.BudStates = BudStates.Select(b => b.Copy()).ToList(); o.Body = new List<Cell>(Body.Count); foreach (var c in Body) o.Body.Add(new Cell { Position = c.Position, Parent = c.Parent, Angle = c.Angle, Elevation = c.Elevation, FormedAt = c.FormedAt, Integrity = c.Integrity, LastDamage = c.LastDamage }); return o; }
+    [System.Text.Json.Serialization.JsonIgnore] internal List<Organism> StepNeighbors = [];
+    [System.Text.Json.Serialization.JsonIgnore] internal double ThermalEfficiency, MetabolicRate;
+    public Organism CopyForView() { var o = (Organism)MemberwiseClone(); o.PhysicalBuds = []; o.StepNeighbors = []; o.BudStates = new List<BudState>(BudStates.Count); foreach (var b in BudStates) o.BudStates.Add(b.Copy()); o.Body = new List<Cell>(Body.Count); foreach (var c in Body) o.Body.Add(new Cell { Position = c.Position, Parent = c.Parent, Angle = c.Angle, Elevation = c.Elevation, FormedAt = c.FormedAt, Integrity = c.Integrity, LastDamage = c.LastDamage }); return o; }
     public double Capacity => 28 + Genes.Cells * 16;
     // A continuous developmental signal permits regional differences in tissue allocation.
     public double LocalEnzymes(int cell) => Math.Clamp(Genes.Enzymes + Genes.Differentiation * Math.Sin(cell * Genes.Turn) * .35 + Genes.Rule(cell).EnzymeBias, 0, 1);
@@ -205,6 +207,7 @@ public sealed class Organism
 
 public sealed class Rock
 {
+    internal int CollisionOrder;
     public double Food { get; set; } = 4;
     public V Position { get; set; }
     public double Radius { get; set; }
@@ -245,8 +248,10 @@ public sealed partial class World
     public const int Cols = 90, Rows = 56, Layers = 4, FieldCount = Cols * Rows * Layers;
     public int FormatVersion { get; set; }
     public bool Tidal { get; set; }
-    public double[] Biofilm { get; set; } = new double[Cols * Rows];
-    [System.Text.Json.Serialization.JsonIgnore] public double WaterLevel => Tidal ? Shoreline.WaterLevel(Time) : Depth;
+    public double[] Biofilm { get; set; } = [];
+    [System.Text.Json.Serialization.JsonIgnore] public double WaterLevel => Tidal ? tideLevel : Depth;
+    [System.Text.Json.Serialization.JsonIgnore] public double Daylight => daylight;
+    private double time, tideLevel = Shoreline.WaterLevel(0), daylight = Shoreline.Daylight(0);
     public double Ground(double x, double y) => Tidal ? Shoreline.Ground(x, y) : 0;
     public int SurfaceTile(V p) => Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1) * Cols + Math.Clamp((int)(p.X / CellSize), 0, Cols - 1);
     public double Immersion(V p, double radius)
@@ -256,7 +261,7 @@ public sealed partial class World
         if (Tidal && SurfaceWater[SurfaceTile(p)] > .05) level = Math.Max(level, PuddleLevel(p));
         return Math.Clamp((level - p.Z + radius) / (2 * radius), 0, 1);
     }
-    public double Time { get; set; }
+    public double Time { get => time; set { time = value; tideLevel = Shoreline.WaterLevel(value); daylight = Shoreline.Daylight(value); } }
     public int NextId { get; set; } = 1;
     public int Births { get; set; }
     public int Deaths { get; set; }
@@ -284,8 +289,7 @@ public sealed partial class World
     private readonly EvolutionRandom random = new();
     public uint RandomState { get => random.State; set => random.State = value == 0 ? 731u : value; }
     private const int BinX = 39, BinY = 24, BinZ = 6;
-    private readonly List<Organism>?[] bins = new List<Organism>?[BinX * BinY * BinZ];
-    private readonly List<Organism> neighbors = [];
+    private readonly List<Organism>?[] bins = [];
     private readonly List<Organism> newborns = [];
     private double[]? oxygenBuffer, carbonBuffer;
     private static int Bin(int x, int y, int z) => (z * BinY + y) * BinX + x;
@@ -293,6 +297,8 @@ public sealed partial class World
     private World(bool fields)
     {
         if (!fields) return;
+        bins = new List<Organism>?[BinX * BinY * BinZ];
+        Biofilm = new double[Cols * Rows]; SoilMoisture = new double[Cols * Rows]; SurfaceWater = new double[Cols * Rows];
         Food = new double[FieldCount]; OrganicMatter = new double[FieldCount];
         Oxygen = new double[FieldCount]; Carbon = new double[FieldCount];
         Array.Fill(Oxygen, 1); Array.Fill(Carbon, 1);
@@ -344,11 +350,33 @@ public sealed partial class World
 
     public int Tile(V p) => (Math.Clamp((int)(p.Z / (Depth / Layers)), 0, Layers - 1) * Rows + Math.Clamp((int)(p.Y / CellSize), 0, Rows - 1)) * Cols + Math.Clamp((int)(p.X / CellSize), 0, Cols - 1);
     public double Sample(V p) => Food[Tile(p)];
-    public double FoodSignal(V p, Genome g) => Food[Tile(p)] * (1 - g.Enzymes * .5) + OrganicMatter[Tile(p)] * g.Enzymes + (Tidal ? Biofilm[SurfaceTile(p)] * Math.Exp(-Math.Abs(p.Z - Ground(p.X, p.Y)) / 32) * .8 : 0);
+    public double FoodSignal(V p, Genome g)
+    {
+        int tile = Tile(p);
+        return Food[tile] * (1 - g.Enzymes * .5) + OrganicMatter[tile] * g.Enzymes
+            + (Tidal ? Biofilm[SurfaceTile(p)] * Math.Exp(-Math.Abs(p.Z - Ground(p.X, p.Y)) / 32) * .8 : 0);
+    }
     public void Note(string text)
     {
         Events.Insert(0, $"{(int)(Time / 60):00}:{(int)(Time % 60):00}  {text}");
         if (Events.Count > 30) Events.RemoveAt(30);
+    }
+
+    private void PrepareNeighbors(Organism o)
+    {
+        CacheAnatomy(o);
+        var center = o.StepCenter; var neighbors = o.StepNeighbors; neighbors.Clear();
+        int bx = Math.Clamp((int)(center.X / 70), 0, BinX - 1), by = Math.Clamp((int)(center.Y / 70), 0, BinY - 1), bz = Math.Clamp((int)(center.Z / 70), 0, BinZ - 1);
+        for (int z = Math.Max(0, bz - 1); z <= Math.Min(BinZ - 1, bz + 1); z++)
+        for (int y = Math.Max(0, by - 1); y <= Math.Min(BinY - 1, by + 1); y++)
+        for (int x = Math.Max(0, bx - 1); x <= Math.Min(BinX - 1, bx + 1); x++)
+        {
+            var bucket = bins[Bin(x, y, z)]; if (bucket == null) continue;
+            foreach (var other in bucket) if (other.Id != o.Id && (other.StepCenter - center).LengthSquared < 65 * 65) neighbors.Add(other);
+        }
+        double temp = Habitat.Temperature(o.StepCenter, Time);
+        o.ThermalEfficiency = Math.Exp(-Math.Pow((temp - o.Genes.ThermalOptimum) / 9, 2));
+        o.MetabolicRate = Math.Pow(1.6, (temp - 23) / 10);
     }
 
     public void Step(double dt)
@@ -373,32 +401,22 @@ public sealed partial class World
         newborns.Clear();
         // Reuse 3D buckets and cache each center once. Neighbors use the same tick snapshot.
         foreach (var bucket in bins) bucket?.Clear();
-        if (Organisms.Count >= 128) Parallel.For(0, Organisms.Count, SimulationWorkers, i => CacheAnatomy(Organisms[i]));
-        else foreach (var organism in Organisms) CacheAnatomy(organism);
         foreach (var o in Organisms)
         {
             var p = o.StepCenter = o.Center;
             int key = Bin(Math.Clamp((int)(p.X / 70), 0, BinX - 1), Math.Clamp((int)(p.Y / 70), 0, BinY - 1), Math.Clamp((int)(p.Z / 70), 0, BinZ - 1));
             (bins[key] ??= []).Add(o);
         }
+        if (Organisms.Count >= 128) Parallel.For(0, Organisms.Count, SimulationWorkers, i => PrepareNeighbors(Organisms[i]));
+        else foreach (var organism in Organisms) PrepareNeighbors(organism);
         foreach (var o in Organisms)
         {
             o.Age += dt;
             RepairBody(o, dt);
             var g = o.Genes;
             var center = o.StepCenter;
-            neighbors.Clear();
-            int bx = Math.Clamp((int)(center.X / 70), 0, BinX - 1), by = Math.Clamp((int)(center.Y / 70), 0, BinY - 1), bz = Math.Clamp((int)(center.Z / 70), 0, BinZ - 1);
-            for (int z = Math.Max(0, bz - 1); z <= Math.Min(BinZ - 1, bz + 1); z++)
-            for (int y = Math.Max(0, by - 1); y <= Math.Min(BinY - 1, by + 1); y++)
-            for (int x = Math.Max(0, bx - 1); x <= Math.Min(BinX - 1, bx + 1); x++)
-            {
-                var bucket = bins[Bin(x, y, z)]; if (bucket == null) continue;
-                foreach (var other in bucket) if (other.Id != o.Id && (other.StepCenter - center).LengthSquared < 65 * 65) neighbors.Add(other);
-            }
-            double temp = Habitat.Temperature(center, Time);
-            double thermalEfficiency = Math.Exp(-Math.Pow((temp - g.ThermalOptimum) / 9, 2));
-            double metabolicRate = Math.Pow(1.6, (temp - 23) / 10);
+            var neighbors = o.StepNeighbors;
+            double thermalEfficiency = o.ThermalEfficiency, metabolicRate = o.MetabolicRate;
             if (o.Body.Count < g.Cells && o.Age > o.Body.Count * 8 && o.Energy > 14)
             {
                 int n = o.Body.Count;
@@ -497,20 +515,15 @@ public sealed partial class World
             {
                 var c = o.Body[ci];
                 double cellRadius = g.CellRadius(ci);
-                foreach (var rock in Rocks)
-                {
-                    V diff = c.Position - rock.Position; double limit = rock.Radius + cellRadius;
-                    if (diff.LengthSquared < limit * limit) { double length = diff.Length; c.Position = rock.Position + (length > .001 ? diff * (1 / length) : new V(1, 0)) * limit; }
-                }
+                c.Position = ResolveRockCollisions(c.Position, cellRadius);
                 c.Position = new(Math.Clamp(c.Position.X, cellRadius, Width - cellRadius), Math.Clamp(c.Position.Y, cellRadius, Height - cellRadius), Math.Clamp(c.Position.Z, cellRadius, Depth - cellRadius));
                 if (Tidal)
                 {
                     double floor = Ground(c.Position.X, c.Position.Y) + cellRadius * g.Flattening;
                     if (c.Position.Z < floor) { c.Position = new(c.Position.X, c.Position.Y, floor); o.VerticalSpeed = Math.Max(0, o.VerticalSpeed); }
-                    if (SurfaceContact(c.Position, cellRadius * g.Flattening + .2, out _, out _, out _))
+                    if (SurfaceContact(c.Position, cellRadius * g.Flattening + .2, out _, out _, out var grazingRock))
                     {
-                        int surface = SurfaceTile(c.Position);
-                        double bite = GrazeSurface(c.Position, cellRadius * g.Flattening + .2, dt * .9 * c.Integrity * (1 - g.Enzymes * .4) * (1 - g.Membrane * .3)); o.Energy = Math.Min(o.Capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
+                        double bite = GrazeContact(c.Position, dt * .9 * c.Integrity * (1 - g.Enzymes * .4) * (1 - g.Membrane * .3), grazingRock); o.Energy = Math.Min(o.Capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
                         DrinkFood(o, bite * 1.7, MoistureAt(c.Position));
                         if (bite > .01) o.LastMeal = Time;
                     }
@@ -524,7 +537,7 @@ public sealed partial class World
                 double digested = Math.Min(OrganicMatter[tile], dt * enzyme * .9 * g.Radius / 6 * (Tidal ? .18 : 1));
                 OrganicMatter[tile] -= digested;
                 double light = LightAt(c.Position);
-                if (Tidal) light *= Shoreline.Daylight(Time) / (1 + neighbors.Count * .12);
+                if (Tidal) light *= Daylight / (1 + neighbors.Count * .12);
                 double exposedArea = Math.Clamp(Math.Sqrt(g.Elongation / g.Flattening), .75, 1.5);
                 double photo = Math.Min(Carbon[tile] * 4, dt * photoInvestment * light * .6 * thermalEfficiency * exposedArea);
                 Carbon[tile] = Math.Max(0, Carbon[tile] - photo * .25);
@@ -637,7 +650,7 @@ public sealed partial class World
         }
         var nextOxygen = oxygenBuffer ??= new double[FieldCount];
         var nextCarbon = carbonBuffer ??= new double[FieldCount];
-        double daylight = Tidal ? Shoreline.Daylight(Time) : 1, waterLevel = WaterLevel;
+        double daylight = Tidal ? Daylight : 1, waterLevel = WaterLevel;
         Parallel.For(0, Layers * Rows, SimulationWorkers, row =>
         {
             int z = row / Rows, y = row % Rows;
@@ -673,7 +686,7 @@ public sealed partial class World
                 double h = Ground(x * CellSize, y * CellSize);
                 double patch = .15 + .85 * Math.Pow(.5 + .5 * Math.Sin(x * .23 + Math.Cos(y * .31)), 4);
                 double moisture = SoilMoisture[i];
-                double light = Math.Exp(-Math.Max(0, WaterLevel - h) / 100) * Shoreline.Daylight(Time);
+                double light = Math.Exp(-Math.Max(0, WaterLevel - h) / 100) * Daylight;
                 int chemistry = Tile(new V(x * CellSize, y * CellSize, h));
                 double growth = Math.Min(nextCarbon[chemistry] * 10, dt * .25 * patch * moisture * light * Math.Min(1, nextCarbon[chemistry]) * (1 - Biofilm[i] / 12));
                 nextCarbon[chemistry] -= growth * .1; nextOxygen[chemistry] = Math.Min(2, nextOxygen[chemistry] + growth * .08);
@@ -687,7 +700,7 @@ public sealed partial class World
     // Only the worker owns mutable simulation state. Renderers receive independent snapshots.
     public World Snapshot(World? previous = null, bool refreshFields = true)
     {
-        var view = new World(false) { FormatVersion = FormatVersion, Tidal = Tidal, Time = Time, Births = Births, Deaths = Deaths, Exchanges = Exchanges, RecordGeneration = RecordGeneration, TissueMeals = TissueMeals, NextId = NextId, Habitat = Habitat, RandomState = RandomState };
+        var view = new World(false) { Organisms = new List<Organism>(Organisms.Count), Detritus = new List<Remains>(Detritus.Count), FormatVersion = FormatVersion, Tidal = Tidal, Time = Time, Births = Births, Deaths = Deaths, Exchanges = Exchanges, RecordGeneration = RecordGeneration, TissueMeals = TissueMeals, NextId = NextId, Habitat = Habitat, RandomState = RandomState };
         bool copy = refreshFields || previous == null;
         view.SoilMoisture = copy ? (double[])SoilMoisture.Clone() : previous!.SoilMoisture;
         view.SurfaceWater = copy ? (double[])SurfaceWater.Clone() : previous!.SurfaceWater;
