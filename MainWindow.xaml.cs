@@ -93,6 +93,7 @@ public partial class MainWindow : Window
         if (!smoke) view.Coast();
         if (smallSmoke) { Width = 960; Height = 640; }
         if (Environment.GetCommandLineArgs().Contains("--smoke-coast")) view.Coast();
+        if (Environment.GetCommandLineArgs().Contains("--smoke-rocks")) view.RockPreview();
         if (Environment.GetCommandLineArgs().Contains("--smoke-evolved"))
         { view.Select(world.Organisms.OrderByDescending(o => o.Body.Count * Appendages.Reach(o)).FirstOrDefault()); view.Following = true; view.Zoom = 10; }
         if (Environment.GetCommandLineArgs().Contains("--smoke-appendages") || Environment.GetCommandLineArgs().Contains("--smoke-branching"))

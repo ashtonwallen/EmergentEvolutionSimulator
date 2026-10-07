@@ -35,7 +35,11 @@ internal sealed class HabitatVisual
         Model.Children.Add(new GeometryModel3D(mesh, new DiffuseMaterial(new ImageBrush(texture))));
         water.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(40, 61, 167, 175))); water.BackMaterial = water.Material;
         foam.Material = new EmissiveMaterial(new SolidColorBrush(Color.FromArgb(145, 161, 214, 192)));
-        growth.Material = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(114, 158, 59))); growth.BackMaterial = growth.Material;
+        var foliage = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+        foliage.GradientStops.Add(new(Color.FromRgb(43, 77, 53), 0));
+        foliage.GradientStops.Add(new(Color.FromRgb(91, 130, 65), .55));
+        foliage.GradientStops.Add(new(Color.FromRgb(157, 171, 94), 1));
+        growth.Material = new DiffuseMaterial(foliage); growth.BackMaterial = growth.Material;
         var poolTint = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
         poolTint.GradientStops.Add(new(Color.FromArgb(0, 66, 136, 141), 0));
         poolTint.GradientStops.Add(new(Color.FromArgb(65, 66, 136, 141), .25));
@@ -92,15 +96,31 @@ internal sealed class HabitatVisual
         foreach (var rock in w.Rocks)
         {
             if (rock.Food < .15) continue;
-            double size = 2 + rock.Food * .9;
-            for (int n = 0; n < 14; n++)
+            double size = 2 + Math.Sqrt(rock.Food) * 2.2;
+            for (int n = 0; n < 18; n++)
             {
-                double angle = n * 2.39996, height = .15 + .8 * n / 14.0;
+                double angle = n * 2.39996 + rock.Position.X * .13, height = .12 + .83 * n / 18.0;
                 V normal = new(Math.Cos(angle) * Math.Sqrt(1 - height * height), Math.Sin(angle) * Math.Sqrt(1 - height * height), height);
-                V p = rock.Position + normal * (rock.Radius + .3);
+                V p = rock.Position + normal * (rock.Radius * RockRadius(rock, normal) + .15);
                 V side = new(-Math.Sin(angle), Math.Cos(angle));
-                V flow = w.FlowAt(p) * .35;
-                Triangle(plants, p - side * (size * .25), p + normal * size + flow, p + side * (size * .25));
+                V flow = w.FlowAt(p) * .12;
+                double length = size * (.65 + .35 * Math.Sin(n * 7.13 + rock.Position.Y));
+                V bend = side * (length * .45) + flow;
+                // Broad, curved ribbons grow out of the actual stone skin, rather than floating spikes.
+                for (int segment = 0; segment < 4; segment++)
+                {
+                    double a = segment / 4.0, b = (segment + 1) / 4.0;
+                    V ca = p + normal * (length * a * (1 - .25 * a)) + bend * (a * a);
+                    V cb = p + normal * (length * b * (1 - .25 * b)) + bend * (b * b);
+                    double wa = length * .16 * (1 - a) * (.55 + Math.Sin(a * Math.PI));
+                    double wb = length * .16 * (1 - b) * (.55 + Math.Sin(b * Math.PI));
+                    int first = plants.Positions.Count;
+                    Triangle(plants, ca - side * wa, cb - side * wb, ca + side * wa);
+                    Triangle(plants, ca + side * wa, cb - side * wb, cb + side * wb);
+                    plants.TextureCoordinates[first] = new(0, a); plants.TextureCoordinates[first + 1] = new(0, b);
+                    plants.TextureCoordinates[first + 2] = new(1, a); plants.TextureCoordinates[first + 3] = new(1, a);
+                    plants.TextureCoordinates[first + 4] = new(0, b); plants.TextureCoordinates[first + 5] = new(1, b);
+                }
             }
         }
         for (int y = 0; y < TextureHeight; y++) for (int x = 0; x < TextureWidth; x++)
@@ -179,5 +199,30 @@ internal sealed class HabitatVisual
     {
         int n = mesh.Positions.Count; mesh.Positions.Add(Aquarium.Point(a)); mesh.Positions.Add(Aquarium.Point(b)); mesh.Positions.Add(Aquarium.Point(c));
         mesh.TriangleIndices.Add(n); mesh.TriangleIndices.Add(n + 1); mesh.TriangleIndices.Add(n + 2);
+        mesh.TextureCoordinates.Add(new(0, 0)); mesh.TextureCoordinates.Add(new(.5, 1)); mesh.TextureCoordinates.Add(new(1, 0));
+    }
+
+    internal static double RockRadius(Rock rock, V n)
+        => .94 + .035 * Math.Sin(n.X * 4 + rock.Position.X) * Math.Cos(n.Y * 5 + n.Z * 3)
+            + .025 * Math.Sin(n.Z * 11 + n.X * 3 + rock.Position.Y);
+
+    internal static Material StoneMaterial()
+    {
+        const int width = 192, height = 96;
+        var pixels = new byte[width * height * 4];
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
+        {
+            double angle = x * Math.PI * 2 / (width - 1), latitude = y * Math.PI / (height - 1);
+            double nx = Math.Cos(angle) * Math.Sin(latitude), ny = Math.Sin(angle) * Math.Sin(latitude), nz = Math.Cos(latitude);
+            double mottling = Math.Sin(nx * 13 + nz * 9) * Math.Sin(ny * 17 - nz * 7);
+            double vein = Math.Pow(Math.Max(0, Math.Cos(nz * 35 + Math.Sin(nx * 6) + ny * 3)), 12);
+            double grain = Math.Sin(nx * 211 + ny * 97 + nz * 137) * 3;
+            double shade = 1 + mottling * .12 + vein * .13;
+            int i = (y * width + x) * 4;
+            pixels[i] = (byte)(79 * shade + grain); pixels[i + 1] = (byte)(84 * shade + grain);
+            pixels[i + 2] = (byte)(80 * shade + grain); pixels[i + 3] = 255;
+        }
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4); bitmap.Freeze();
+        var material = new DiffuseMaterial(new ImageBrush(bitmap)); material.Freeze(); return material;
     }
 }

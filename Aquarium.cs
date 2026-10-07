@@ -146,6 +146,7 @@ public sealed class Aquarium : Grid
     public void Select(Organism? o) { selectedId = o?.Id; deceasedSelection = o; SelectedChanged?.Invoke(); }
     public void Overview() { Following = false; Zoom = 1 / World.HabitatScale; target = new(World.Width / 2, World.Height / 2, 100); elevation = .72; yaw = -.4; }
     public void Coast() { Following = false; Zoom = 2.5 / World.HabitatScale; target = new(1280 * World.HabitatScale, 570 * World.HabitatScale, 225); elevation = .47; yaw = -.85; }
+    internal void RockPreview() { if (world.Rocks.Count == 0) return; Following = false; Zoom = 10; target = world.Rocks[6 % world.Rocks.Count].Position; elevation = .6; yaw = -.85; }
     public void Orbit(double horizontal, double vertical) { yaw += horizontal; elevation = Math.Clamp(elevation + vertical, -.12, 1.5); }
     private void Pick(Point p)
     {
@@ -164,17 +165,20 @@ public sealed class Aquarium : Grid
         scene.Children.Add(new DirectionalLight(Color.FromRgb(235, 246, 209), new Vector3D(-.5, -1, -.3)));
         scene.Children.Add(new DirectionalLight(Color.FromRgb(64, 110, 151), new Vector3D(.8, -.15, 1)));
         habitatVisual = new HabitatVisual(world); scene.Children.Add(habitatVisual.Model);
+        var stone = HabitatVisual.StoneMaterial();
         foreach (var rock in world.Rocks)
         {
             var eroded = sphere.Clone();
             var points = new Point3DCollection();
+            for (int y = 0; y <= 14; y++) for (int x = 0; x <= 20; x++)
+                eroded.TextureCoordinates.Add(new Point(x / 20.0, y / 14.0));
             foreach (var p in sphere.Positions)
             {
-                double erosion = .91 + .065 * Math.Sin(p.X * 7 + rock.Position.X) * Math.Cos(p.Z * 5 + p.Y * 3) + .025 * Math.Sin(p.Y * 13 + p.X * 4);
+                double erosion = HabitatVisual.RockRadius(rock, new(p.X, p.Z, p.Y));
                 points.Add(new Point3D(p.X * erosion, p.Y * erosion, p.Z * erosion));
             }
-            eroded.Positions = points; eroded.Freeze();
-            var r = new GeometryModel3D(eroded, Solid(Color.FromRgb(41, 61, 63), 0));
+            eroded.Positions = points; eroded.Normals.Clear(); eroded.Freeze();
+            var r = new GeometryModel3D(eroded, stone);
             r.Transform = new MatrixTransform3D(ScaleAt(rock.Position, rock.Radius, rock.Radius, rock.Radius)); r.Freeze(); scene.Children.Add(r);
         }
         algaeCloud.Material = Solid(Color.FromRgb(104, 145, 86), 0); detritusCloud.Material = Solid(Color.FromRgb(138, 112, 79), 0);
