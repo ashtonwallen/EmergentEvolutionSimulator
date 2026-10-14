@@ -84,71 +84,27 @@ internal sealed class AppendageVisual(Material material)
         V f = V.Direction(o.Heading, o.Pitch), s = new(-Math.Sin(o.Heading), Math.Cos(o.Heading), 0), u = new(-Math.Cos(o.Heading) * Math.Sin(o.Pitch), -Math.Sin(o.Heading) * Math.Sin(o.Pitch), Math.Cos(o.Pitch));
         V center = o.Center;
         V Local(V p) { p -= center; return new(Dot(p, f), Dot(p, s), Dot(p, u)); }
-        Span<V> ends = stackalloc V[buds.Count];
         for (int i = 0; i < buds.Count; i++)
         {
             var p = poses[i]; var b = buds[i];
             if (!p.Active) continue;
-            V anchor = b.Parent >= 0 ? ends[b.Parent] : Local(p.Root);
-            if (b.Parent < 0 && skin != null && p.Anchor < skin.Nodes.Length)
-            {
-                V deform = new(); double sum = 0;
-                for (int k = 0; k < skin.Nodes.Length; k++)
-                {
-                    V d = Local(o.Body[k].Position) - skin.Nodes[k];
-                    double limit = o.Genes.CellRadius(k) * .85;
-                    if (d.Length > limit) d *= limit / d.Length;
-                    double falloff = 1 + (skin.Nodes[p.Anchor] - skin.Nodes[k]).LengthSquared / (o.Genes.CellRadius(k) * o.Genes.CellRadius(k) * .7);
-                    double weight = 1 / (falloff * falloff); deform += d * weight; sum += weight;
-                }
-                V outward = Local(p.Root) - Local(o.Body[p.Anchor].Position);
-                anchor = skin.Nodes[p.Anchor] + deform * (1 / sum) + outward * .95;
-            }
-            V tip = p.Tip, joint = p.Joint;
-            if (world.Tidal)
-            {
-                tip = world.VisibleContact(tip, p.Radius * p.Flatness * .2);
-                joint = world.VisibleContact(joint, p.Radius * p.Flatness * .3);
-            }
-            ends[i] = Local(tip);
-            V[] path = [anchor, Local(joint), ends[i]];
+            V anchor = Local(p.Root), tip = p.Tip, joint = p.Joint;
+            V[] path = [anchor, Local(joint), Local(tip)];
+            V startDirection = Unit(path[1] - path[0]), endDirection = Unit(path[2] - path[1]);
             int start = mesh.Positions.Count;
             const int sides = 9, rings = 5;
             double tissue = o.BudStates[i].Integrity < .65 ? .875 : b.Photo > .35 && b.Photo > b.Digestion ? .625 : b.Digestion > .4 ? .875 : b.Stiffness > .6 ? .375 : .125;
-            int onlyChild = -1, children = 0;
-            for (int k = i + 1; k < buds.Count; k++) if (buds[k].Parent == i && poses[k].Active) { onlyChild = k; children++; }
-            V startDirection = Unit(path[1] - path[0]), endDirection = Unit(path[2] - path[1]);
-            double startRadius = p.Radius * 1.05, endRadius = p.Radius * b.Taper;
-            double startFlatness = p.Flatness, endFlatness = p.Flatness;
-            if (b.Parent >= 0)
-            {
-                int siblings = 0;
-                for (int k = b.Parent + 1; k < buds.Count; k++) if (buds[k].Parent == b.Parent && poses[k].Active) siblings++;
-                if (siblings == 1)
-                {
-                    startDirection = Unit(Unit(Local(poses[b.Parent].Tip) - Local(poses[b.Parent].Joint)) + startDirection);
-                    startRadius = Math.Max(startRadius, poses[b.Parent].Radius * buds[b.Parent].Taper);
-                    startFlatness = (p.Flatness + poses[b.Parent].Flatness) * .5;
-                }
-            }
-            if (children == 1)
-            {
-                endDirection = Unit(endDirection + Unit(Local(poses[onlyChild].Joint) - Local(poses[onlyChild].Root)));
-                endRadius = Math.Max(endRadius, poses[onlyChild].Radius * 1.05);
-                endFlatness = (p.Flatness + poses[onlyChild].Flatness) * .5;
-            }
             for (int ring = 0; ring < rings; ring++)
             {
                 double t = (double)ring / (rings - 1);
-                V control = path[1] * 2 - (path[0] + path[2]) * .5;
-                V at = path[0] * ((1 - t) * (1 - t)) + control * (2 * t * (1 - t)) + path[2] * (t * t);
-                V tangent = Unit((control - path[0]) * (1 - t) + (path[2] - control) * t);
-                if (ring == 0) tangent = startDirection;
-                if (ring == rings - 1) tangent = endDirection;
-                V a = Cross(tangent, Math.Abs(tangent.Z) > .9 ? new V(0, 1) : new V(0, 0, 1)); a = Unit(a);
-                V normalB = Cross(tangent, a);
-                double radius = t < .5 ? startRadius * (1 - 2 * t) + p.Radius * 2 * t : p.Radius * (2 - 2 * t) + endRadius * (2 * t - 1);
-                double flatness = t < .5 ? startFlatness * (1 - 2 * t) + p.Flatness * 2 * t : p.Flatness * (2 - 2 * t) + endFlatness * (2 * t - 1);
+                V at = Local(BranchGeometry.Point(p, t));
+                V worldTangent = Unit(t <= .5 ? p.Joint - p.Root : p.Tip - p.Joint);
+                V worldSide = Unit(Cross(worldTangent, Math.Abs(worldTangent.Z) > .9 ? new V(0, 1) : new V(0, 0, 1)));
+                V worldUp = Cross(worldTangent, worldSide);
+                V a = new(Dot(worldSide, f), Dot(worldSide, s), Dot(worldSide, u));
+                V normalB = new(Dot(worldUp, f), Dot(worldUp, s), Dot(worldUp, u));
+                double radius = BranchGeometry.RadiusAt(p, t);
+                double flatness = p.Flatness;
                 for (int j = 0; j < sides; j++)
                 {
                     double angle = j * Math.Tau / sides;
@@ -163,7 +119,7 @@ internal sealed class AppendageVisual(Material material)
                 int a = start + ring * sides + j, b0 = start + ring * sides + (j + 1) % sides, c = a + sides, d = b0 + sides;
                 foreach (int index in new[] { a, c, b0, b0, c, d }) mesh.TriangleIndices.Add(index);
             }
-            int cap = mesh.Positions.Count; mesh.Positions.Add(new(ends[i].X, ends[i].Z, ends[i].Y)); mesh.Normals.Add(new(endDirection.X, endDirection.Z, endDirection.Y)); mesh.TextureCoordinates.Add(new(.5, tissue));
+            int cap = mesh.Positions.Count; mesh.Positions.Add(new(path[2].X, path[2].Z, path[2].Y)); mesh.Normals.Add(new(endDirection.X, endDirection.Z, endDirection.Y)); mesh.TextureCoordinates.Add(new(.5, tissue));
             for (int j = 0; j < sides; j++) foreach (int index in new[] { cap, start + sides * (rings - 1) + j, start + sides * (rings - 1) + (j + 1) % sides }) mesh.TriangleIndices.Add(index);
             int rootCap = mesh.Positions.Count; mesh.Positions.Add(new(anchor.X, anchor.Z, anchor.Y)); mesh.Normals.Add(new(-startDirection.X, -startDirection.Z, -startDirection.Y)); mesh.TextureCoordinates.Add(new(.5, tissue));
             for (int j = 0; j < sides; j++) foreach (int index in new[] { rootCap, start + (j + 1) % sides, start + j }) mesh.TriangleIndices.Add(index);

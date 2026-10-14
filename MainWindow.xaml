@@ -1,12 +1,12 @@
 <Window x:Class="Tideglass.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Tideglass" Width="1440" Height="940" MinWidth="960" MinHeight="640" Background="#07191D" Foreground="#D9E7DC" FontFamily="Segoe UI" WindowStartupLocation="CenterScreen">
  <Window.Resources>
   <Style TargetType="Button">
-   <Setter Property="Foreground" Value="#C2D7CC"/><Setter Property="Background" Value="#142D31"/><Setter Property="BorderBrush" Value="#304A49"/><Setter Property="Padding" Value="13,8"/><Setter Property="Margin" Value="3,0"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Foreground" Value="#C2D7CC"/><Setter Property="Background" Value="#142D31"/><Setter Property="BorderBrush" Value="#304A49"/><Setter Property="Padding" Value="13,8"/><Setter Property="Margin" Value="3,3"/><Setter Property="Cursor" Value="Hand"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Plate" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="5" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Plate" Property="Background" Value="#2A4948"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
  </Window.Resources>
  <Grid>
-  <Grid.RowDefinitions><RowDefinition Height="82"/><RowDefinition Height="*"/><RowDefinition Height="74"/></Grid.RowDefinitions>
+  <Grid.RowDefinitions><RowDefinition Height="82"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Grid Margin="28,0">
    <StackPanel VerticalAlignment="Center"><TextBlock Text="Tideglass" FontSize="21" FontWeight="Light"/><TextBlock x:Name="RenderLabel" Text="3D" FontSize="11" Foreground="#779D99" Margin="0,5,0,0"/></StackPanel>
    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -17,9 +17,7 @@
   </Grid>
   <Grid x:Name="SimulationView" Grid.Row="1" ClipToBounds="True">
    <Border x:Name="ViewportHost"/>
-   <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26" Background="#C00A2024" CornerRadius="6" Padding="14,10" IsHitTestVisible="False"><StackPanel><TextBlock x:Name="HabitatLabel" Text="Nutrient-fed water · primitive founders" FontSize="11" Foreground="#89A9A1" Margin="0,5,0,0"/><TextBlock x:Name="WaterLabel" Foreground="#89A9A1" FontSize="11" Margin="0,5,0,0"/></StackPanel></Border>
-   <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,185,0,0"><CheckBox x:Name="ReducedDisplayBox" Content="Reduce display work" Foreground="#C2D7CC" ToolTip="At speeds above 1?, update the view less often to leave more CPU time for simulation." Checked="ReducedDisplayChanged" Unchecked="ReducedDisplayChanged"/><Button Content="Run without display" Click="NoDisplayClick" Margin="0,10,0,0" ToolTip="Run at maximum throughput without rendering. Autosave stays enabled."/></StackPanel>
-   <Button Content="Visit the shoreline" Click="CoastClick" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,145,0,0" Padding="14,8"/>
+   <Border x:Name="StatsPanel" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26" Background="#C00A2024" CornerRadius="6" Padding="14,10" MouseLeftButtonUp="StatsClick" Cursor="Hand" ToolTip="Click to collapse or expand statistics"><StackPanel><TextBlock x:Name="StatsIcon" Text="i" FontSize="18" Visibility="Collapsed"/><StackPanel x:Name="StatsDetails"><TextBlock x:Name="HabitatLabel" FontSize="11" Foreground="#89A9A1" Margin="0,5,0,0"/><TextBlock x:Name="WaterLabel" Foreground="#89A9A1" FontSize="11" Margin="0,5,0,0"/></StackPanel></StackPanel></Border>
    <Border x:Name="Inspector" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Width="260" Margin="0,26,26,0" Background="#ED0C2328" BorderBrush="#395653" BorderThickness="1" CornerRadius="8" Padding="20">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
      <TextBlock x:Name="CreatureTitle" Text="Organism" FontSize="20" FontWeight="Light" Margin="0,12,0,8"/>
@@ -38,13 +36,33 @@
    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
     <TextBlock Text="Display off" FontSize="22" HorizontalAlignment="Center"/>
     <TextBlock x:Name="NoDisplayStatus" Text="Running at maximum throughput" Foreground="#89A9A1" Margin="0,12,0,18" HorizontalAlignment="Center"/>
-    <CheckBox x:Name="KeepAwakeBox" Content="Keep computer awake" IsChecked="True" Foreground="#C2D7CC" Margin="0,0,0,18" Checked="KeepAwakeChanged" Unchecked="KeepAwakeChanged"/>
     <Button Content="Show simulation" Click="ShowDisplayClick"/>
    </StackPanel>
   </Border>
-  <Grid Grid.Row="2" Margin="25,0">
-   <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="PauseButton" Content="Ⅱ  Pause" Click="PauseClick" Width="98"/><Button Content="1×" Click="SpeedClick" Tag="1"/><Button Content="5×" Click="SpeedClick" Tag="5"/><Button Content="20×" Click="SpeedClick" Tag="20"/><Button Content="100×" Click="SpeedClick" Tag="100"/><TextBlock x:Name="SpeedLabel" Text="1× / real time" VerticalAlignment="Center" Foreground="#88A69A" FontSize="11" Margin="14,0"/></StackPanel>
-   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right"><TextBlock x:Name="SaveLabel" Text="Autosave enabled" VerticalAlignment="Center" FontSize="11" Foreground="#88A69A" Margin="0,0,12,0"/><Button x:Name="WanderButton" Content="Wander" Click="WanderClick"/><Button x:Name="WaterButton" Content="O₂ map" Click="WaterClick"/><Button x:Name="OverviewButton" Content="Overview" Click="OverviewClick"/><Button Content="Save" Click="SaveClick"/><Button Content="New" Click="NewClick"/></StackPanel>
-  </Grid>
+  <Border Grid.Row="2" BorderBrush="#24413F" BorderThickness="0,1,0,0" Padding="25,6,25,12">
+  <WrapPanel>
+   <Button x:Name="PauseButton" Content="Pause" Click="PauseClick" Width="85"/><Button Content="1&#215;" Click="SpeedClick" Tag="1"/><Button Content="5&#215;" Click="SpeedClick" Tag="5"/><Button Content="20&#215;" Click="SpeedClick" Tag="20"/><Button Content="100&#215;" Click="SpeedClick" Tag="100"/>
+   <TextBlock x:Name="SpeedLabel" Text="1&#215; / real time" VerticalAlignment="Center" Foreground="#88A69A" FontSize="11" Margin="10,0"/>
+   <Button x:Name="ShorelineButton" Content="Shoreline" Click="CoastClick" ToolTip="Cycle views: shoreline, waterline, overhead, open water, swimmers, bottom dwellers"/>
+   <Button x:Name="WanderButton" Content="Wander" Click="WanderClick"/><Button x:Name="WaterButton" Content="O&#8322; map" Click="WaterClick"/><Button x:Name="OverviewButton" Content="Overview" Click="OverviewClick"/>
+   <Button x:Name="FullscreenButton" Content="Fullscreen" Click="FullscreenClick" ToolTip="F11 toggles fullscreen; Esc exits"/>
+   <Button Content="Save" Click="SaveClick"/><Button Content="New" Click="NewClick"/>
+   <TextBlock x:Name="SaveLabel" Text="Autosave enabled" VerticalAlignment="Center" FontSize="11" Foreground="#88A69A" Margin="12,0,0,0"/>
+   <CheckBox x:Name="ReducedDisplayBox" Content="Reduce display work" Foreground="#C2D7CC" Margin="12,10" VerticalAlignment="Center" Checked="ReducedDisplayChanged" Unchecked="ReducedDisplayChanged"/>
+   <CheckBox x:Name="RestartBox" Content="Restart after extinction" Foreground="#C2D7CC" Margin="12,10" VerticalAlignment="Center" Checked="RestartChanged" Unchecked="RestartChanged"/>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,3" ToolTip="Pause births at this population. 0 means unlimited. Existing organisms are not removed when you lower the cap.">
+    <TextBlock Text="Population cap" Foreground="#C2D7CC" VerticalAlignment="Center" Margin="0,0,8,0"/>
+    <TextBox x:Name="PopulationCapInput" Width="72" Padding="5,4" VerticalContentAlignment="Center" Background="#142D31" Foreground="#D9E7DC" BorderBrush="#304A49" KeyDown="PopulationCapKeyDown" AutomationProperties.Name="Population cap"/>
+    <Button Content="Apply" Click="PopulationCapApply"/>
+    <TextBlock x:Name="PopulationCapStatus" FontSize="11" Foreground="#89A9A1" VerticalAlignment="Center" Margin="6,0,0,0"/>
+   </StackPanel>
+   <CheckBox x:Name="CollectDataBox" Content="Collect data" Foreground="#C2D7CC" Margin="12,10" VerticalAlignment="Center" Checked="CollectDataChanged" Unchecked="CollectDataChanged" ToolTip="Save observations locally while you run the simulation."/>
+   <CheckBox x:Name="KeepAwakeBox" Content="Keep computer awake" IsChecked="True" Foreground="#C2D7CC" Margin="12,10" VerticalAlignment="Center" Checked="KeepAwakeChanged" Unchecked="KeepAwakeChanged" ToolTip="Prevent system sleep while running without the display. The monitor can still turn off."/>
+   <Button Content="Data folder" Click="DataFolderClick"/><Button Content="Run without display" Click="NoDisplayClick"/>
+   <TextBlock x:Name="SeedLabel" VerticalAlignment="Center" Foreground="#89A9A1" FontSize="11" Margin="12,8"/>
+   <TextBlock x:Name="DataStatus" Foreground="#89A9A1" VerticalAlignment="Center" FontSize="11" Margin="12,8"/>
+
+  </WrapPanel>
+  </Border>
  </Grid>
 </Window>

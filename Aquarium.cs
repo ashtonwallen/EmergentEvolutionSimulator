@@ -14,6 +14,9 @@ public sealed class Aquarium : Grid
     private readonly Viewport3D viewport = new() { ClipToBounds = true };
     private readonly PerspectiveCamera camera = new() { FieldOfView = 48, NearPlaneDistance = 1, FarPlaneDistance = 6500 };
     private readonly Model3DGroup scene = new(), life = new(), detail = new();
+    private readonly Model3DGroup distantLife = new();
+    private readonly Dictionary<Model3D, int[]> distantPicking = [];
+    private double lastDistantUpdate = -100;
     private readonly Dictionary<int, CreatureVisual> creatures = [];
     private readonly Dictionary<Model3D, int> picking = [];
     private readonly Dictionary<int, Material> materials = [];
@@ -26,6 +29,7 @@ public sealed class Aquarium : Grid
     private Organism? deceasedSelection;
     private V target = new(World.Width / 2, World.Height / 2, 110);
     private double yaw = -.4, elevation = .65, snapshotAt, previousFrame;
+    private double blendDuration = .05;
     private Point mouseStart, lastMouse;
     private bool dragging, pan, moved;
     private MouseButton dragButton;
@@ -44,6 +48,8 @@ public sealed class Aquarium : Grid
     public double Zoom { get; set; } = 1.25;
     public double LastRenderMilliseconds { get; private set; }
     public int VisibleCellCount => creatures.Values.Sum(v => v.Organism.Body.Count);
+    public int DetailedCreatureCount => creatures.Values.Count(v => v.Visible);
+    public int DistantBatchCount => distantLife.Children.Count;
     public BodySurface? SelectedSurface => selectedId.HasValue && creatures.TryGetValue(selectedId.Value, out var v) ? v.Skin.Surface : null;
     public event Action? SelectedChanged;
     public event Action? ManualNavigation;
@@ -58,6 +64,7 @@ public sealed class Aquarium : Grid
         public V From, To;
         public bool Visible = true;
         public int FogBand;
+        public double Extent;
     }
 
     public Aquarium(World initial)
@@ -144,8 +151,38 @@ public sealed class Aquarium : Grid
     }
 
     public void Select(Organism? o) { selectedId = o?.Id; deceasedSelection = o; SelectedChanged?.Invoke(); }
-    public void Overview() { Following = false; Zoom = 1 / World.HabitatScale; target = new(World.Width / 2, World.Height / 2, 100); elevation = .72; yaw = -.4; }
-    public void Coast() { Following = false; Zoom = 2.5 / World.HabitatScale; target = new(1280 * World.HabitatScale, 570 * World.HabitatScale, 225); elevation = .47; yaw = -.85; }
+    public void Overview() { ViewName = "Overview"; Following = false; Zoom = 1 / World.HabitatScale; target = new(World.Width / 2, World.Height / 2, 100); elevation = .72; yaw = -.4; }
+    private int shorelineView = -1;
+    public string ViewName { get; private set; } = "Shoreline";
+    public void Coast()
+    {
+        Following = false; CancelNavigation(); shorelineView = (shorelineView + 1) % 6;
+        ViewName = new[] { "Shoreline", "Waterline", "Overhead", "Open water", "Swimmers", "Bottom dwellers" }[shorelineView];
+        double scale = World.HabitatScale;
+        if (shorelineView >= 3)
+        {
+            bool bottom = shorelineView == 5;
+            var candidates = world.Organisms.Where(o => o.Center.X > 230 && o.Center.X < World.Width - 230 && o.Center.Y > 230 && o.Center.Y < World.Height - 230 && o.Center.Z < world.WaterLevel - 24
+                && (bottom ? o.Center.Z - world.Ground(o.Center.X, o.Center.Y) < o.Genes.Radius * 3 : o.Center.Z - world.Ground(o.Center.X, o.Center.Y) > o.Genes.Radius * 4));
+            var subject = candidates.OrderByDescending(o => bottom ? o.Body.Count : (o.Velocity - world.FlowAt(o.Center)).LengthSquared).FirstOrDefault();
+            if (shorelineView != 3 && subject != null) { Select(subject); Following = true; target = subject.Center; }
+            else { Following = false; target = new V(950, 600, bottom ? world.Ground(950, 600) + 12 : (world.Ground(950, 600) + world.WaterLevel) * .5); }
+            Zoom = shorelineView == 3 ? 5 : 10; elevation = bottom ? .025 : 0; yaw = -.7;
+            for (int i = 0; i < 8; i++)
+            {
+                double candidateYaw = -.7 + i * Math.PI / 4;
+                double x = target.X + Math.Sin(candidateYaw) * 2050 / Zoom, y = target.Y + Math.Cos(candidateYaw) * 2050 / Zoom;
+                if (x > 20 && x < World.Width - 20 && y > 20 && y < World.Height - 20 && world.Ground(x, y) < target.Z - 4) { yaw = candidateYaw; break; }
+            }
+            return;
+        }
+        (Zoom, target, elevation, yaw) = shorelineView switch
+        {
+            1 => (4.0 / scale, new V(1280 * scale, 570 * scale, world.WaterLevel + 12), .20, -1.35),
+            2 => (4.5 / scale, new V(1280 * scale, 570 * scale, world.WaterLevel), 1.12, -.35),
+            _ => (2.5 / scale, new V(1280 * scale, 570 * scale, 225), .47, -.85)
+        };
+    }
     internal void RockPreview() { if (world.Rocks.Count == 0) return; Following = false; Zoom = 10; target = world.Rocks[6 % world.Rocks.Count].Position; elevation = .6; yaw = -.85; }
     public void Orbit(double horizontal, double vertical) { yaw += horizontal; elevation = Math.Clamp(elevation + vertical, -.12, 1.5); }
     private void Pick(Point p)
@@ -154,6 +191,9 @@ public sealed class Aquarium : Grid
         {
             if (result is RayMeshGeometry3DHitTestResult hit && picking.TryGetValue(hit.ModelHit, out int id) && creatures.TryGetValue(id, out var creature))
             { Select(creature.Organism); Following = false; return HitTestResultBehavior.Stop; }
+            if (result is RayMeshGeometry3DHitTestResult distant && distantPicking.TryGetValue(distant.ModelHit, out var ids)
+                && distant.VertexIndex1 < ids.Length && creatures.TryGetValue(ids[distant.VertexIndex1], out var small))
+            { Select(small.Organism); Following = false; return HitTestResultBehavior.Stop; }
             return HitTestResultBehavior.Continue;
         }, new PointHitTestParameters(p));
     }
@@ -161,6 +201,7 @@ public sealed class Aquarium : Grid
     private void ResetScene(World next)
     {
         world = next; scene.Children.Clear(); life.Children.Clear(); detail.Children.Clear(); creatures.Clear(); picking.Clear();
+        distantLife.Children.Clear(); distantPicking.Clear(); lastDistantUpdate = -100;
         scene.Children.Add(new AmbientLight(Color.FromRgb(100, 128, 133)));
         scene.Children.Add(new DirectionalLight(Color.FromRgb(235, 246, 209), new Vector3D(-.5, -1, -.3)));
         scene.Children.Add(new DirectionalLight(Color.FromRgb(64, 110, 151), new Vector3D(.8, -.15, 1)));
@@ -186,7 +227,7 @@ public sealed class Aquarium : Grid
         oxygenTexture = new WriteableBitmap(World.Cols, World.Rows, 96, 96, PixelFormats.Bgra32, null);
         var overlayBrush = new ImageBrush(oxygenTexture) { Opacity = .48 };
         oxygenPlane = new GeometryModel3D(Plane(World.Depth / 2), new DiffuseMaterial(overlayBrush));
-        scene.Children.Add(life); scene.Children.Add(detail); scene.Children.Add(habitatVisual.Water); AcceptSnapshot(next);
+        scene.Children.Add(life); scene.Children.Add(distantLife); scene.Children.Add(detail); scene.Children.Add(habitatVisual.Water); AcceptSnapshot(next);
     }
     private void AddLine(V a, V b, double radius, Material material)
     {
@@ -195,8 +236,12 @@ public sealed class Aquarium : Grid
 
     public void AcceptSnapshot(World next)
     {
+        if (next.AutomaticRestarts != world.AutomaticRestarts)
+        {
+            Following = false; Select(null); ResetScene(next); return;
+        }
         double now = watch.Elapsed.TotalSeconds;
-        double blend = Math.Clamp((now - snapshotAt) / .05, 0, 1);
+        double blend = Math.Clamp((now - snapshotAt) / blendDuration, 0, 1);
         world = next;
         var alive = new HashSet<int>();
         foreach (var o in next.Organisms)
@@ -210,6 +255,7 @@ public sealed class Aquarium : Grid
                 creatures.Add(o.Id, visual); life.Children.Add(visual.Group);
             }
             visual.Organism = o;
+            visual.Extent = o.Genes.Radius * (2 + o.Body.Count) * o.Genes.Elongation + Branching.Extent(o);
             visual.From += (visual.To - visual.From) * blend; visual.To = o.Center;
         }
         foreach (int id in creatures.Keys.Where(id => !alive.Contains(id)).ToArray())
@@ -218,7 +264,7 @@ public sealed class Aquarium : Grid
             foreach (Model3D m in v.Group.Children) picking.Remove(m);
             life.Children.Remove(v.Group); creatures.Remove(id);
         }
-        snapshotAt = now;
+        blendDuration = Math.Clamp(now - snapshotAt, .05, .5); snapshotAt = now;
         if (ShowWater && oxygenPlane != null && !scene.Children.Contains(oxygenPlane)) scene.Children.Insert(3, oxygenPlane);
         if (!ShowWater && oxygenPlane != null) scene.Children.Remove(oxygenPlane);
         if (ShowWater && now - lastWaterUpdate > .25 && oxygenTexture != null)
@@ -262,7 +308,7 @@ public sealed class Aquarium : Grid
     {
         var cost = Stopwatch.StartNew();
         double now = watch.Elapsed.TotalSeconds, elapsed = Math.Min(.1, now - previousFrame); previousFrame = now;
-        double blend = Math.Clamp((now - snapshotAt) / .05, 0, 1);
+        double blend = Math.Clamp((now - snapshotAt) / blendDuration, 0, 1);
         if (Following && Selected != null) target += (Selected.Center - target) * (1 - Math.Exp(-elapsed * 5));
         UpdateNavigation(elapsed);
         double smoothing = 1 - Math.Exp(-elapsed * 18);
@@ -273,28 +319,45 @@ public sealed class Aquarium : Grid
         double distance = 2050 / renderedZoom;
         var focus = Point(renderedTarget);
         var eye = focus + new Vector3D(Math.Sin(renderedYaw) * Math.Cos(renderedElevation), Math.Sin(renderedElevation), Math.Cos(renderedYaw) * Math.Cos(renderedElevation)) * distance;
+        if (shorelineView >= 3 && (Following || ViewName == "Open water"))
+        {
+            // Keep the eye below the surface and above terrain even while following.
+            double ground = world.Ground(eye.X + World.Width / 2, eye.Z + World.Height / 2);
+            eye.Y = Math.Max(ground + 3, Math.Min(world.WaterLevel - 5, eye.Y));
+        }
         camera.Position = eye; camera.LookDirection = focus - eye; camera.UpDirection = new Vector3D(0, 1, 0);
         var forward = camera.LookDirection; forward.Normalize();
         var right = Vector3D.CrossProduct(forward, camera.UpDirection); right.Normalize();
         var up = Vector3D.CrossProduct(right, forward);
         double tanH = Math.Tan(camera.FieldOfView * Math.PI / 360), tanV = tanH * Math.Max(1, ActualHeight) / Math.Max(1, ActualWidth);
         if (selectedId.HasValue && creatures.TryGetValue(selectedId.Value, out var chosen)) chosen.Skin.Prepare(chosen.Organism, true);
-        int meshRequests = 0, animated = 0, limbRequests = 0;
+        int meshRequests = 0, animated = 0, limbRequests = 0, detailedCount = 0;
+        bool crowded = creatures.Count > 600, rebuildDistant = now - lastDistantUpdate >= .2;
+        Dictionary<int, (MeshGeometry3D Mesh, List<int> Ids, Genome Genes)>? distant = crowded && rebuildDistant ? [] : null;
+        if (!crowded && distantLife.Children.Count > 0) { distantLife.Children.Clear(); distantPicking.Clear(); }
         foreach (var visual in creatures.Values)
         {
             var o = visual.Organism;
             V position = visual.From + (visual.To - visual.From) * blend;
             var direction = Point(position) - eye;
             double along = Vector3D.DotProduct(direction, forward);
-            double radius = Math.Max(visual.Skin.Extent, o.Genes.Radius * (2 + o.Body.Count) * o.Genes.Elongation) + Branching.Extent(o);
+            double radius = Math.Max(visual.Skin.Extent, visual.Extent);
             bool visible = along + radius > 1 && Math.Abs(Vector3D.DotProduct(direction, right)) < along * tanH + radius * Math.Sqrt(1 + tanH * tanH) && Math.Abs(Vector3D.DotProduct(direction, up)) < along * tanV + radius * Math.Sqrt(1 + tanV * tanV);
-            if (visible != visual.Visible)
+            bool selected = o.Id == selectedId;
+            double pixels = radius * ActualWidth / (2 * tanH * Math.Max(1, along));
+            bool detailed = visible && (!crowded || selected || (pixels >= 5 && detailedCount < 192));
+            if (detailed) detailedCount++;
+            if (detailed != visual.Visible)
             {
-                visual.Visible = visible;
-                if (visible) life.Children.Add(visual.Group); else life.Children.Remove(visual.Group);
+                visual.Visible = detailed;
+                if (detailed) life.Children.Add(visual.Group); else life.Children.Remove(visual.Group);
             }
             if (!visible) continue;
-            bool selected = o.Id == selectedId;
+            if (!detailed)
+            {
+                if (distant != null) AddDistantBody(distant, o, position - o.Center, world.WaterLevel);
+                continue;
+            }
             int fogBand = selected ? 0 : Math.Clamp((int)((along - distance * .75) / 240), 0, 4);
             if (fogBand != visual.FogBand) { visual.FogBand = fogBand; visual.Skin.Model.Material = Membrane(o.Genes, fogBand); }
             if (selected || (visual.Skin.NeedsWork(o, false) && meshRequests++ < 4)) visual.Skin.Prepare(o, selected);
@@ -307,7 +370,61 @@ public sealed class Aquarium : Grid
             double pulse = movingSkin ? 1 : 1 + Math.Sin(o.Age * o.Genes.Rhythm * 2 + o.Phase) * o.Genes.Contract * .05;
             visual.Transform.Matrix = new Matrix3D(f.X / pulse, f.Z / pulse, f.Y / pulse, 0, u.X * pulse, u.Z * pulse, u.Y * pulse, 0, s.X, s.Z, s.Y, 0, at.X, at.Y, at.Z, 1);
         }
+        if (distant != null)
+        {
+            distantLife.Children.Clear(); distantPicking.Clear();
+            foreach (var batch in distant.Values)
+            {
+                batch.Mesh.Freeze();
+                var material = Membrane(batch.Genes, 1);
+                var model = new GeometryModel3D(batch.Mesh, material) { BackMaterial = material }; model.Freeze();
+                distantLife.Children.Add(model); distantPicking[model] = batch.Ids.ToArray();
+            }
+            lastDistantUpdate = now;
+        }
         LastRenderMilliseconds = cost.Elapsed.TotalMilliseconds;
+    }
+    // Small bodies share a few draw calls. Clicking one still selects that exact
+    // organism and restores its full skin, appendages, and inspector.
+    private static void AddDistantBody(Dictionary<int, (MeshGeometry3D Mesh, List<int> Ids, Genome Genes)> batches, Organism o, V offset, double waterLevel)
+    {
+        int key = Math.Clamp((int)(o.Genes.Hue * 12), 0, 11);
+        if (!batches.TryGetValue(key, out var batch)) batches[key] = batch = (new(), [], o.Genes);
+        for (int i = 0; i < o.Body.Count; i++)
+        {
+            var c = o.Body[i]; double radius = o.Genes.CellRadius(i);
+            V axis = V.Direction(o.Heading + c.Angle, o.Pitch + c.Elevation);
+            V side = BodyMechanics.Unit(BodyMechanics.Cross(new V(0, 0, 1), axis));
+            V up = BodyMechanics.Unit(BodyMechanics.Cross(axis, side));
+            axis *= radius * o.Genes.Elongation; side *= radius * .95; up *= radius * o.Genes.Flattening;
+            AddShape(c.Position + offset, axis, side, up);
+        }
+        if (o.Genes.Buds != null && o.BudStates.Any(b => b.Growth > .01))
+        {
+            Span<BudPose> poses = stackalloc BudPose[o.Genes.Buds.Count];
+            Branching.Poses(o, o.Age, poses, waterLevel);
+            foreach (var p in poses)
+            {
+                if (!p.Active) continue;
+                Segment(p.Root, p.Joint, p.Radius, p.Flatness);
+                Segment(p.Joint, p.Tip, p.Radius * (1 + p.Taper) * .5, p.Flatness);
+            }
+        }
+        void Segment(V a, V b, double radius, double flatness)
+        {
+            V axis = (b - a) * .5, normal = BodyMechanics.Unit(axis);
+            V side = BodyMechanics.Unit(BodyMechanics.Cross(normal, Math.Abs(normal.Z) > .9 ? new V(0, 1) : new V(0, 0, 1)));
+            V up = BodyMechanics.Cross(normal, side);
+            AddShape((a + b) * .5 + offset, axis, side * radius, up * (radius * flatness));
+        }
+        void AddShape(V center, V axis, V side, V up)
+        {
+            ReadOnlySpan<V> vertices = [axis, axis * -1, side, side * -1, up, up * -1];
+            int first = batch.Mesh.Positions.Count;
+            foreach (var v in vertices) { batch.Mesh.Positions.Add(Point(center + v)); batch.Ids.Add(o.Id); }
+            ReadOnlySpan<int> triangles = [0, 2, 4, 4, 2, 1, 1, 2, 5, 5, 2, 0, 4, 3, 0, 1, 3, 4, 5, 3, 1, 0, 3, 5];
+            foreach (int vertex in triangles) batch.Mesh.TriangleIndices.Add(first + vertex);
+        }
     }
     private Material Membrane(Genome genes, int fogBand = 0)
     {

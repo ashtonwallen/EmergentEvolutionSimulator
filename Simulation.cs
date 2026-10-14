@@ -65,7 +65,7 @@ public sealed class Genome
     public GrowthRule Rule(int cell) => Pattern[cell % Pattern.Count];
     public double CellRadius(int cell) => Radius * Rule(cell).Size;
     public Genome Copy() { var g = (Genome)MemberwiseClone(); g.Pattern = Pattern.Select(r => r.Copy()).ToList(); g.Buds = Buds?.Select(b => b.Copy()).ToList(); return g; }
-    public Genome Offspring(Random r, Genome? mate)
+    public Genome Offspring(Random r, Genome? mate, MutationMode mutationMode = MutationMode.Scaled)
     {
         var g = Copy();
         if (mate != null)
@@ -98,7 +98,8 @@ public sealed class Genome
             if (r.NextDouble() < .5) g.Buds = mate.Buds?.Select(b => b.Copy()).ToList() ?? Branching.FromLegacy(mate);
         }
         g.Buds ??= Branching.FromLegacy(g);
-        double Mut(double n, double step, double lo, double hi) => Math.Clamp(n + (r.NextDouble() < .3 ? (r.NextDouble() * 2 - 1) * step : 0), lo, hi);
+        double mutationScale = Mutation.Scale(g, mutationMode);
+        double Mut(double n, double step, double lo, double hi) => Mutation.Adjust(r, n, step, lo, hi, .3 * mutationScale, mutationMode);
         if (r.NextDouble() < .2) g.Cells = Math.Clamp(g.Cells + (r.NextDouble() < .5 ? -1 : 1), 1, Development.NodeBudget);
         g.Cells = Math.Min(g.Cells, Development.NodeBudget - g.Buds.Count);
         g.Radius = Mut(g.Radius, 1, 3.5, 11);
@@ -136,11 +137,11 @@ public sealed class Genome
             rule.Stiffness = Mut(rule.Stiffness, .22, .02, 1);
             rule.Bend = Mut(rule.Bend, .25, -.3, 1.3);
             rule.Paddle = Mut(rule.Paddle, .22, .05, 1);
-            if (r.NextDouble() < .08) rule.ParentBack = Math.Clamp(rule.ParentBack + (r.NextDouble() < .5 ? -1 : 1), 1, Development.NodeBudget);
+            if (r.NextDouble() < .08 * mutationScale) rule.ParentBack = Math.Clamp(rule.ParentBack + (r.NextDouble() < .5 ? -1 : 1), 1, Development.NodeBudget);
         }
         if (r.NextDouble() < .08 && g.Pattern.Count < Development.NodeBudget) g.Pattern.Add(g.Pattern[(int)(r.NextDouble() * g.Pattern.Count)].Copy());
         if (r.NextDouble() < .04 && g.Pattern.Count > 1) g.Pattern.RemoveAt((int)(r.NextDouble() * g.Pattern.Count));
-        Branching.Mutate(g, r);
+        Branching.Mutate(g, r, mutationMode, mutationScale);
         g.Hue = (Mut(g.Hue, .055, 0, 1) + 1) % 1;
         return g;
     }
@@ -179,6 +180,9 @@ public sealed class Organism
     public double LightEnergy { get; set; }
     public double GrazingEnergy { get; set; }
     public double TissueEnergy { get; set; }
+    public FeedingMetrics Feeding { get; set; } = new();
+    public FeedingContact CoreFeeding { get; set; } = new();
+    [System.Text.Json.Serialization.JsonIgnore] internal double StepTissueCue;
     public double LastAttack { get; set; } = -10;
     public double Irritation { get; set; }
     public V ThreatDirection { get; set; }
@@ -193,13 +197,15 @@ public sealed class Organism
     public double ContactSlip { get; set; }
     public double LastDamage { get; set; } = -100;
     [System.Text.Json.Serialization.JsonIgnore] public BudPose[] PhysicalBuds = [];
+    [System.Text.Json.Serialization.JsonIgnore] internal BranchContact[] StepBranchContacts = [];
     [System.Text.Json.Serialization.JsonIgnore] public V BudMinimum, BudMaximum;
+    [System.Text.Json.Serialization.JsonIgnore] public double PhysicalExtent;
     public V Center { get { V p = new(); foreach (var c in Body) p += c.Position; return Body.Count == 0 ? p : p * (1.0 / Body.Count); } }
     [System.Text.Json.Serialization.JsonIgnore] public V StepCenter;
     [System.Text.Json.Serialization.JsonIgnore] internal List<Organism> StepNeighbors = [];
     [System.Text.Json.Serialization.JsonIgnore] internal double ThermalEfficiency, MetabolicRate;
-    public Organism CopyForView() { var o = (Organism)MemberwiseClone(); o.PhysicalBuds = []; o.StepNeighbors = []; o.BudStates = new List<BudState>(BudStates.Count); foreach (var b in BudStates) o.BudStates.Add(b.Copy()); o.Body = new List<Cell>(Body.Count); foreach (var c in Body) o.Body.Add(new Cell { Position = c.Position, Parent = c.Parent, Angle = c.Angle, Elevation = c.Elevation, FormedAt = c.FormedAt, Integrity = c.Integrity, LastDamage = c.LastDamage }); return o; }
-    public double Capacity => 28 + Genes.Cells * 16;
+    public Organism CopyForView() { var o = (Organism)MemberwiseClone(); o.Feeding = Feeding.Copy(); o.CoreFeeding = CoreFeeding.Copy(); o.PhysicalBuds = []; o.StepBranchContacts = []; o.StepNeighbors = []; o.BudStates = new List<BudState>(BudStates.Count); foreach (var b in BudStates) o.BudStates.Add(b.Copy()); o.Body = new List<Cell>(Body.Count); foreach (var c in Body) o.Body.Add(new Cell { Position = c.Position, Parent = c.Parent, Angle = c.Angle, Elevation = c.Elevation, FormedAt = c.FormedAt, Integrity = c.Integrity, LastDamage = c.LastDamage }); return o; }
+    public double Capacity => Math.Max(.001, 44 * TissueEconomy.Volume(this));
     // A continuous developmental signal permits regional differences in tissue allocation.
     public double LocalEnzymes(int cell) => Math.Clamp(Genes.Enzymes + Genes.Differentiation * Math.Sin(cell * Genes.Turn) * .35 + Genes.Rule(cell).EnzymeBias, 0, 1);
     public double LocalPhotosynthesis(int cell) => Math.Clamp(Genes.Photosynthesis + Genes.Rule(cell).PhotoBias, 0, 1);
@@ -247,6 +253,14 @@ public sealed partial class World
     public const double Width = 1800 * HabitatScale, Height = 1120 * HabitatScale, Depth = 360;
     public const int Cols = 90, Rows = 56, Layers = 4, FieldCount = Cols * Rows * Layers;
     public int FormatVersion { get; set; }
+    public MutationMode MutationMode { get; set; } = MutationMode.Scaled;
+    public bool CollectData { get; set; }
+    public int? Seed { get; set; }
+    public string? RunId { get; set; }
+    public bool RestartOnExtinction { get; set; }
+    public const int DefaultPopulationCap = 1000;
+    public int PopulationCap { get; set; } = DefaultPopulationCap;
+    public int AutomaticRestarts { get; set; }
     public bool Tidal { get; set; }
     public double[] Biofilm { get; set; } = [];
     [System.Text.Json.Serialization.JsonIgnore] public double WaterLevel => Tidal ? tideLevel : Depth;
@@ -289,7 +303,9 @@ public sealed partial class World
     private readonly EvolutionRandom random = new();
     public uint RandomState { get => random.State; set => random.State = value == 0 ? 731u : value; }
     private const int BinX = 39, BinY = 24, BinZ = 6;
-    private readonly List<Organism>?[] bins = [];
+    // Candidate geometry stays contiguous, avoiding organism pointer reads for misses.
+    private readonly record struct NeighborEntry(Organism Organism, V Center, double Extent);
+    private readonly List<NeighborEntry>?[] bins = [];
     private readonly List<Organism> newborns = [];
     private double[]? oxygenBuffer, carbonBuffer;
     private static int Bin(int x, int y, int z) => (z * BinY + y) * BinX + x;
@@ -297,16 +313,17 @@ public sealed partial class World
     private World(bool fields)
     {
         if (!fields) return;
-        bins = new List<Organism>?[BinX * BinY * BinZ];
+        bins = new List<NeighborEntry>?[BinX * BinY * BinZ];
         Biofilm = new double[Cols * Rows]; SoilMoisture = new double[Cols * Rows]; SurfaceWater = new double[Cols * Rows];
         Food = new double[FieldCount]; OrganicMatter = new double[FieldCount];
         Oxygen = new double[FieldCount]; Carbon = new double[FieldCount];
         Array.Fill(Oxygen, 1); Array.Fill(Carbon, 1);
     }
 
-    public static World Create(int seed = 731)
+    public static World Create(int seed = 731, int populationCap = DefaultPopulationCap)
     {
-        var w = new World { RandomState = (uint)seed, FormatVersion = 8, Tidal = true };
+        ArgumentOutOfRangeException.ThrowIfNegative(populationCap);
+        var w = new World { RandomState = (uint)seed, Seed = seed, FormatVersion = 9, Tidal = true, PopulationCap = populationCap };
         var r = new Random(seed);
         for (int i = 0; i < w.Biofilm.Length; i++) w.Biofilm[i] = 3 + r.NextDouble() * 5;
         for (int i = 0; i < w.Food.Length; i++) { w.Food[i] = (1.5 + r.NextDouble() * 5) / Layers; w.OrganicMatter[i] = r.NextDouble() * 3 / Layers; }
@@ -314,7 +331,8 @@ public sealed partial class World
         foreach (var rock in w.Rocks) rock.Position = new(rock.Position.X, rock.Position.Y, w.Ground(rock.Position.X, rock.Position.Y) - rock.Radius * .35);
         w.AddHabitatDetails(); w.AddHabitatPockets();
         w.InitializeMoisture();
-        for (int i = 0; i < 100; i++)
+        int founders = populationCap == 0 ? 100 : Math.Min(100, populationCap);
+        for (int i = 0; i < founders; i++)
         {
             V p;
             do { p = new(40 + r.NextDouble() * (Width - 80), 40 + r.NextDouble() * (Height - 80), 30 + r.NextDouble() * (Depth - 60)); } while (p.Z < w.Ground(p.X, p.Y) + 12 || p.Z > w.WaterLevel - 12 || w.Rocks.Any(k => (k.Position - p).Length < k.Radius + 25));
@@ -335,7 +353,7 @@ public sealed partial class World
             o.Age = r.NextDouble() * 40;
             w.Organisms.Add(o);
         }
-        w.Note("100 primitive founders");
+        w.Note($"{founders} primitive founders");
         return w;
     }
 
@@ -353,7 +371,7 @@ public sealed partial class World
     public double FoodSignal(V p, Genome g)
     {
         int tile = Tile(p);
-        return Food[tile] * (1 - g.Enzymes * .5) + OrganicMatter[tile] * g.Enzymes
+        return Food[tile] * (1 - g.Enzymes * .5) + OrganicMatter[tile] * g.Enzymes + RemainsCue(p) * g.Enzymes * .3
             + (Tidal ? Biofilm[SurfaceTile(p)] * Math.Exp(-Math.Abs(p.Z - Ground(p.X, p.Y)) / 32) * .8 : 0);
     }
     public void Note(string text)
@@ -362,17 +380,24 @@ public sealed partial class World
         if (Events.Count > 30) Events.RemoveAt(30);
     }
 
+    private double maximumExtent;
     private void PrepareNeighbors(Organism o)
     {
-        CacheAnatomy(o);
         var center = o.StepCenter; var neighbors = o.StepNeighbors; neighbors.Clear();
-        int bx = Math.Clamp((int)(center.X / 70), 0, BinX - 1), by = Math.Clamp((int)(center.Y / 70), 0, BinY - 1), bz = Math.Clamp((int)(center.Z / 70), 0, BinZ - 1);
-        for (int z = Math.Max(0, bz - 1); z <= Math.Min(BinZ - 1, bz + 1); z++)
-        for (int y = Math.Max(0, by - 1); y <= Math.Min(BinY - 1, by + 1); y++)
-        for (int x = Math.Max(0, bx - 1); x <= Math.Min(BinX - 1, bx + 1); x++)
+        // Bound the query itself, rather than rounding its radius up around a whole bin.
+        // Keep z/y/x traversal so interactions retain their original ordering.
+        double reach = 65 + o.PhysicalExtent + maximumExtent + 1e-9;
+        int x0 = Math.Clamp((int)((center.X - reach) / 70), 0, BinX - 1), x1 = Math.Clamp((int)((center.X + reach) / 70), 0, BinX - 1);
+        int y0 = Math.Clamp((int)((center.Y - reach) / 70), 0, BinY - 1), y1 = Math.Clamp((int)((center.Y + reach) / 70), 0, BinY - 1);
+        int z0 = Math.Clamp((int)((center.Z - reach) / 70), 0, BinZ - 1), z1 = Math.Clamp((int)((center.Z + reach) / 70), 0, BinZ - 1);
+        for (int z = z0; z <= z1; z++)
+        for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
         {
             var bucket = bins[Bin(x, y, z)]; if (bucket == null) continue;
-            foreach (var other in bucket) if (other.Id != o.Id && (other.StepCenter - center).LengthSquared < 65 * 65) neighbors.Add(other);
+            foreach (var other in bucket)
+                if ((other.Center - center).LengthSquared < Math.Pow(65 + o.PhysicalExtent + other.Extent, 2) && other.Organism.Id != o.Id)
+                    neighbors.Add(other.Organism);
         }
         double temp = Habitat.Temperature(o.StepCenter, Time);
         o.ThermalEfficiency = Math.Exp(-Math.Pow((temp - o.Genes.ThermalOptimum) / 9, 2));
@@ -381,6 +406,7 @@ public sealed partial class World
 
     public void Step(double dt)
     {
+        FeedingSince ??= Time;
         Time += dt;
         EnvironmentAccumulator += dt;
         if (EnvironmentAccumulator >= .5)
@@ -400,31 +426,37 @@ public sealed partial class World
         }
         newborns.Clear();
         // Reuse 3D buckets and cache each center once. Neighbors use the same tick snapshot.
+        maximumExtent = 0;
         foreach (var bucket in bins) bucket?.Clear();
         foreach (var o in Organisms)
         {
             var p = o.StepCenter = o.Center;
+            CacheAnatomy(o);
+            maximumExtent = Math.Max(maximumExtent, o.PhysicalExtent);
             int key = Bin(Math.Clamp((int)(p.X / 70), 0, BinX - 1), Math.Clamp((int)(p.Y / 70), 0, BinY - 1), Math.Clamp((int)(p.Z / 70), 0, BinZ - 1));
-            (bins[key] ??= []).Add(o);
+            (bins[key] ??= []).Add(new(o, p, o.PhysicalExtent));
         }
         if (Organisms.Count >= 128) Parallel.For(0, Organisms.Count, SimulationWorkers, i => PrepareNeighbors(Organisms[i]));
         else foreach (var organism in Organisms) PrepareNeighbors(organism);
         foreach (var o in Organisms)
         {
+            if (o.Energy <= 0) continue;
             o.Age += dt;
             RepairBody(o, dt);
             var g = o.Genes;
             var center = o.StepCenter;
             var neighbors = o.StepNeighbors;
+            int nearbyCount = 0;
+            foreach (var other in neighbors) if ((other.StepCenter - center).LengthSquared < 65 * 65) nearbyCount++;
             double thermalEfficiency = o.ThermalEfficiency, metabolicRate = o.MetabolicRate;
-            if (o.Body.Count < g.Cells && o.Age > o.Body.Count * 8 && o.Energy > 14)
+            if (o.Body.Count < g.Cells && o.Age > o.Body.Count * 8 && o.Energy > TissueEconomy.GrowthReserve(o) + TissueEconomy.BuildCost * TissueEconomy.CoreVolume(g, o.Body.Count))
             {
                 int n = o.Body.Count;
                 var rule = g.Rule(n);
                 int parent = Math.Max(0, n - rule.ParentBack - (g.Branch > (Math.Sin(n * 12.3) + 1) / 2 ? 1 : 0));
                 double angle = o.Heading + n * g.Turn + rule.Turn;
                 o.Body.Add(new Cell { FormedAt = o.Age, Parent = parent, Angle = n * g.Turn + rule.Turn, Elevation = rule.Elevation, Position = o.Body[parent].Position + V.Direction(angle, o.Pitch + rule.Elevation) * g.CellRadius(n) * 1.55 });
-                o.Energy -= 5;
+                o.Energy -= TissueEconomy.BuildCost * TissueEconomy.CoreVolume(g, n);
             }
             V gradient = new(FoodSignal(center + new V(24, 0), g) - FoodSignal(center - new V(24, 0), g), FoodSignal(center + new V(0, 24), g) - FoodSignal(center - new V(0, 24), g), FoodSignal(center + new V(0, 0, 48), g) - FoodSignal(center - new V(0, 0, 48), g));
             gradient *= g.Sense;
@@ -437,42 +469,28 @@ public sealed partial class World
             }
             o.Irritation *= Math.Exp(-dt * 1.2);
             gradient += o.ThreatDirection * (o.Irritation * (g.Sense + .15) * 4);
+            double hunger = 1 - Math.Clamp(o.Energy / o.Capacity, 0, 1);
+            bool preyNearby = false;
             foreach (var other in neighbors)
             {
                     if (other.Id == o.Id || other.Energy <= 0) continue;
                     V toward = other.StepCenter - center; double distance = toward.Length;
                     if (distance < 1 || distance > 65) continue;
+                    preyNearby = true;
                     double kin = Math.Max(0, 1 - Math.Abs(g.Hue - other.Genes.Hue) * 8);
-                    double weight = g.KinAffinity * kin + g.TissueSense * Math.Max(0, g.Enzymes - other.Genes.Membrane) * (1 - Math.Clamp(o.Energy / o.Capacity, 0, 1));
+                    double weight = g.KinAffinity * kin + g.TissueSense * other.StepTissueCue * hunger;
                     gradient += toward * (weight * (1 - distance / 65) / distance);
             }
-            double target = Math.Atan2(gradient.Y, gradient.X);
-            double delta = Math.Atan2(Math.Sin(target - o.Heading), Math.Cos(target - o.Heading));
-            o.Heading += delta * Math.Min(1, gradient.Length) * .5 * dt + Math.Sin(o.Age * .19 + o.Phase) * .18 * dt;
-            double targetPitch = Math.Atan2(gradient.Z, Math.Sqrt(gradient.X * gradient.X + gradient.Y * gradient.Y));
-            o.Pitch = Math.Clamp(o.Pitch + (targetPitch - o.Pitch) * Math.Min(1, gradient.Length) * .35 * dt + Math.Sin(o.Age * .11 + o.Phase) * .06 * dt, -1.35, 1.35);
-            if (Tidal && center.Z < Ground(center.X, center.Y) + g.Radius * 3)
-            {
-                double slope = (Ground(center.X + Math.Cos(o.Heading) * 8, center.Y + Math.Sin(o.Heading) * 8) - Ground(center.X, center.Y)) / 8;
-                o.Pitch += (Math.Clamp(Math.Atan(slope), -.6, .6) - o.Pitch) * Math.Min(1, dt * 3);
-            }
-            double pulse = Math.Sin(o.Age * g.Rhythm * 2 + o.Phase);
-            // Low-cost active tissue/fluid coupling: shape and contraction drive slip.
-            // This is a stylized overdamped swimmer, not computational fluid dynamics.
-            // Broadside area increases drag; alignment of tissue makes a different swimmer.
-            V forward = V.Direction(o.Heading, o.Pitch);
-            double lateralSpread = 0;
-            foreach (var c in o.Body) { var d = c.Position - center; double dot = d.X * forward.X + d.Y * forward.Y + d.Z * forward.Z; lateralSpread += Math.Sqrt(Math.Max(0, d.LengthSquared - dot * dot)); }
-            lateralSpread /= o.Body.Count;
-            double thrust = g.Contract * (1.5 + Math.Sqrt(o.Body.Count) * .8) * (1 + pulse * .55) / (1 + lateralSpread / (g.Radius * 3));
-            thrust *= thermalEfficiency * (.35 + .65 * Math.Min(1, Oxygen[Tile(center)]));
-            // Proportions have costs and benefits: a longer body slips forward more easily,
-            // a broad thin body exposes more surface but pays additional drag.
-            thrust /= 1 + Math.Abs(g.Elongation - 1) * .15 + g.EdgeGrowth * .3;
-            thrust *= (Tidal ? .8 : 1) * o.Body.Average(c => c.Integrity) * (1 + o.Irritation * .8);
+            if (preyNearby) { o.Feeding.PreyNearbySeconds += dt; Feeding.PreyNearbySeconds += dt; }
             double wet = Tidal ? Immersion(center, g.Radius) : 1;
-            V freeMotion = FlowAt(center) * wet + forward * (thrust * wet);
+            V freeMotion = BodyMechanics.Solve(this, o, gradient, dt);
+            double corePower = o.LocomotionPower;
             V appendageMotion = Tidal ? Appendages.Solve(this, o, dt, neighbors, freeMotion) : new V();
+            // No more growth or repair occurs in this organism's turn. Damage below
+            // affects its neighbors, whose capacities must still be read live.
+            double capacity = o.Capacity;
+            if (Tidal) o.LocomotionPower += corePower;
+            o.Feeding.LocomotionEnergy += o.LocomotionPower * dt; Feeding.LocomotionEnergy += o.LocomotionPower * dt;
             V motion = freeMotion + appendageMotion;
             if (Tidal && center.Z < Ground(center.X, center.Y) + g.Radius * 1.5)
                 motion *= 1 / (1 + Shoreline.Sediment(center.X, center.Y) * .8 / (1 + o.GroundContacts));
@@ -482,8 +500,7 @@ public sealed partial class World
                 o.Energy -= dt * o.Body.Count * (Math.Max(0, .55 - o.Hydration) * 2 + g.Waterproofing * .025);
                 o.VerticalSpeed = (o.VerticalSpeed + dt * (-16 * (1 - wet) + (0.5 - g.Density) * 8 * wet)) * Math.Exp(-dt * (1 + wet * 3));
                 motion += new V(0, 0, o.VerticalSpeed);
-                if (center.Z < Ground(center.X, center.Y) + g.Radius * 1.5)
-                    motion += new V(forward.X, forward.Y) * (g.Contract * .3 * (1 - wet));
+
             }
             o.Velocity = motion;
             foreach (var c in o.Body) c.Position += motion * dt;
@@ -498,13 +515,15 @@ public sealed partial class World
                 c.Position -= correction;
                 parent.Position += correction;
                 V wanted = V.Direction(o.Heading + c.Angle, o.Pitch + c.Elevation);
-                c.Position += (wanted * rest - diff) * (.22 * dt * g.Adhesion);
+                V bend = (wanted * rest - diff) * (.11 * dt * g.Adhesion);
+                c.Position += bend; parent.Position -= bend;
             }
             for (int a = 0; a < o.Body.Count; a++) for (int b = a + 1; b < o.Body.Count; b++)
             {
                 V diff = o.Body[a].Position - o.Body[b].Position;
                 double length = diff.Length;
-                double separation = (g.CellRadius(a) + g.CellRadius(b)) * .625;
+                V normal = BodyMechanics.Unit(diff);
+                double separation = (BodyMechanics.Support(o, a, normal) + BodyMechanics.Support(o, b, normal)) * .625;
                 if (length < separation && length > .001)
                 {
                     V push = diff * ((separation - length) / length * .2);
@@ -515,15 +534,25 @@ public sealed partial class World
             {
                 var c = o.Body[ci];
                 double cellRadius = g.CellRadius(ci);
-                c.Position = ResolveRockCollisions(c.Position, cellRadius);
+                double exchangeArea = TissueEconomy.CoreArea(g, ci) * c.Integrity;
+                foreach (var rock in NearbyRocks(c.Position))
+                {
+                    V offset = c.Position - rock.Position;
+                    double outerReach = rock.Radius + BodyMechanics.OuterRadius(o, ci);
+                    if (offset.LengthSquared > outerReach * outerReach) continue;
+                    double distance = offset.Length;
+                    V normal = distance > 1e-9 ? offset * (1 / distance) : new V(0, 0, 1);
+                    double reach = rock.Radius + BodyMechanics.Support(o, ci, normal);
+                    if (distance < reach) c.Position = rock.Position + normal * reach;
+                }
                 c.Position = new(Math.Clamp(c.Position.X, cellRadius, Width - cellRadius), Math.Clamp(c.Position.Y, cellRadius, Height - cellRadius), Math.Clamp(c.Position.Z, cellRadius, Depth - cellRadius));
                 if (Tidal)
                 {
-                    double floor = Ground(c.Position.X, c.Position.Y) + cellRadius * g.Flattening;
+                    double floor = Ground(c.Position.X, c.Position.Y) + BodyMechanics.Support(o, ci, new V(0, 0, 1));
                     if (c.Position.Z < floor) { c.Position = new(c.Position.X, c.Position.Y, floor); o.VerticalSpeed = Math.Max(0, o.VerticalSpeed); }
                     if (SurfaceContact(c.Position, cellRadius * g.Flattening + .2, out _, out _, out var grazingRock))
                     {
-                        double bite = GrazeContact(c.Position, dt * .9 * c.Integrity * (1 - g.Enzymes * .4) * (1 - g.Membrane * .3), grazingRock); o.Energy = Math.Min(o.Capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
+                        double bite = GrazeContact(c.Position, dt * .9 * exchangeArea * (1 - g.Enzymes * .4) * (1 - g.Membrane * .3), grazingRock); o.Energy = Math.Min(capacity, o.Energy + bite * 1.7); o.ShoreEnergy += bite * 1.7;
                         DrinkFood(o, bite * 1.7, MoistureAt(c.Position));
                         if (bite > .01) o.LastMeal = Time;
                     }
@@ -532,20 +561,19 @@ public sealed partial class World
                 int tile = Tile(c.Position);
                 double enzyme = o.LocalEnzymes(ci);
                 double photoInvestment = o.LocalPhotosynthesis(ci);
-                double eaten = Math.Min(Food[tile], (Tidal ? .18 * Immersion(c.Position, cellRadius) : 1) * dt * .45 * cellRadius / 6 * (1 - enzyme * .5) * (1 - g.Membrane * .28) * (1 - photoInvestment * .45) * thermalEfficiency);
+                double eaten = Math.Min(Food[tile], (Tidal ? .18 * Immersion(c.Position, cellRadius) : 1) * dt * .45 * exchangeArea * (1 - enzyme * .5) * (1 - g.Membrane * .28) * (1 - photoInvestment * .45) * thermalEfficiency);
                 Food[tile] -= eaten;
-                double digested = Math.Min(OrganicMatter[tile], dt * enzyme * .9 * g.Radius / 6 * (Tidal ? .18 : 1));
+                double digested = Math.Min(OrganicMatter[tile], dt * enzyme * .9 * exchangeArea * (Tidal ? .18 : 1));
                 OrganicMatter[tile] -= digested;
                 double light = LightAt(c.Position);
-                if (Tidal) light *= Daylight / (1 + neighbors.Count * .12);
+                if (Tidal) light *= Daylight / (1 + nearbyCount * .12);
                 double exposedArea = Math.Clamp(Math.Sqrt(g.Elongation / g.Flattening), .75, 1.5);
-                double photo = Math.Min(Carbon[tile] * 4, dt * photoInvestment * light * .6 * thermalEfficiency * exposedArea);
-                Carbon[tile] = Math.Max(0, Carbon[tile] - photo * .25);
-                Oxygen[tile] = Math.Min(2, Oxygen[tile] + photo * .22);
+                double photo = Photosynthesize(c.Position, dt * photoInvestment * light * .6 * thermalEfficiency * exposedArea * exchangeArea, dt);
                 double aerobic = .2 + .8 * Math.Min(1, Oxygen[tile] / .45);
-                double captured = Tidal ? Capture(c.Position - motion * dt, c.Position, cellRadius, dt * 1.2 * c.Integrity, enzyme) + CaptureRemains(c.Position, cellRadius, dt * enzyme * 1.5) : 0;
+                double captured = Tidal ? Capture(c.Position - motion * dt, c.Position, cellRadius, dt * 1.2 * exchangeArea, enzyme) : 0;
+                if (Tidal) Scavenge(o, c.Position, cellRadius, exchangeArea, enzyme, g.SurfaceAdhesion + g.Contract * .25, dt, aerobic);
                 double grazing = (eaten * 1.3 + digested * 1.7 + captured) * aerobic;
-                o.Energy = Math.Min(o.Capacity, o.Energy + grazing + photo);
+                o.Energy = Math.Min(capacity, o.Energy + grazing + photo);
                 o.LightEnergy += photo; o.GrazingEnergy += grazing;
                 if (Tidal) DrinkFood(o, grazing);
                 double respiration = dt * metabolicRate * .045;
@@ -554,7 +582,7 @@ public sealed partial class World
                 if (Oxygen[tile] < .12) o.Energy -= dt * (.12 - Oxygen[tile]) * 2;
                 if (eaten + digested > dt * .2) o.LastMeal = Time;
             }
-            o.Energy -= dt * metabolicRate * o.Body.Count * (.13 + g.Radius * .014 + g.Contract * g.Contract * .13 + g.Sense * .025 + Math.Abs(g.MoistureSense) * .008 + g.Enzymes * .055 + g.Membrane * .035 + g.Photosynthesis * .04);
+            o.Energy -= dt * metabolicRate * TissueEconomy.CoreVolume(o) * (.13 + g.Radius * .014 + g.Contract * g.Contract * .13 + g.Sense * .025 + Math.Abs(g.MoistureSense) * .008 + g.Enzymes * .055 + g.Membrane * .035 + g.Photosynthesis * .04);
             o.Energy -= dt * o.Body.Count * (.025 * Math.Abs(g.Elongation - 1) + .035 * (1 - Math.Min(1, g.Flattening)) + .025 * g.EdgeGrowth + .015 * g.SurfaceAdhesion + .04 * o.Irritation * g.Contract);
             o.Energy -= dt * Math.Max(0, o.Age - 700) * .0007;
             Organism? mate = null;
@@ -571,38 +599,22 @@ public sealed partial class World
                         foreach (var c in o.Body) c.Position -= diff * (adhesion * (length - contact) * dt / length);
                         if (adhesion > .08) o.LastContact = Time;
                     }
-                    // Enzymes digest exposed tissue by the same rule as organic detritus.
-                    // There is no predator flag, hunt script, or prescribed species.
-                    double tissueGap = double.MaxValue;
-                    if (g.Enzymes > other.Genes.Membrane && other.Energy > 0 && length < contact + 2 + (o.Body.Count + other.Body.Count) * 12)
-                        for (int a = 0; a < o.Body.Count; a++) for (int b = 0; b < other.Body.Count; b++)
-                            tissueGap = Math.Min(tissueGap, (o.Body[a].Position - other.Body[b].Position).Length - g.CellRadius(a) - other.Genes.CellRadius(b));
-                    if (tissueGap < 2 && other.Energy > 0)
-                    {
-                        double exposed = Math.Max(0, g.Enzymes - other.Genes.Membrane);
-                        double stolen = Math.Min(other.Energy, exposed * dt * 2 * Math.Sqrt(o.Body.Count) * Math.Clamp(Math.Sqrt((double)o.Body.Count / other.Body.Count), .5, 2.5));
-                        other.Energy -= stolen;
-                        if (Tidal) DamageTissue(other, center, stolen * 1.5);
-                        o.Energy = Math.Min(o.Capacity, o.Energy + stolen * .7);
-                        o.TissueEnergy += stolen * .7;
-                        if (Tidal) DrinkFood(o, stolen * .7, other.Hydration);
-                        if (stolen > .002 && length > .001)
-                        {
-                            other.ThreatDirection = diff * (-1 / length);
-                            other.Irritation = Math.Min(2, other.Irritation + stolen * 4);
-                        }
-                        if (stolen > .002) { if (Time - o.LastAttack > 3) TissueMeals++; o.LastAttack = Time; other.LastAttack = Time; }
-                    }
-                    if (length < contact + 8 && other.Energy > other.Capacity * .65 && other.Age > 70 && Math.Abs(other.Genes.Cells - g.Cells) <= 3 && Time - other.LastBirth > 40) mate = other;
+                    if (length < contact + 8 && other.Age > 70 && Math.Abs(other.Genes.Cells - g.Cells) <= 3 && Time - other.LastBirth > 40 && other.Energy > other.Capacity * .65) mate = other;
             }
-            if (o.Energy > o.Capacity * .82 && o.Age > 70 && Time - o.LastBirth > 45 && o.Body.Count == g.Cells)
+            FeedCore(o, neighbors, dt);
+            // Reserve slots for all births this tick before spending parent energy or mutating.
+            // Existing organisms above a lowered cap survive; deaths free slots next tick.
+            if ((PopulationCap == 0 || Organisms.Count + newborns.Count < PopulationCap)
+                && o.Energy > capacity * .82 && o.Age > 70 && Time - o.LastBirth > 45 && o.Body.Count == g.Cells && o.Energy * .36 > TissueEconomy.BuildCost * TissueEconomy.CoreVolume(g, 0) * 2)
             {
-                var baby = Make(g.Offspring(random, mate?.Genes), center + V.Direction(o.Heading + 2, o.Pitch) * (g.Radius * 3));
+                var baby = Make(g.Offspring(random, mate?.Genes, MutationMode), center + V.Direction(o.Heading + 2, o.Pitch) * (g.Radius * 3));
+                if (o.Energy * .36 <= TissueEconomy.BuildCost * TissueEconomy.CoreVolume(baby.Genes, 0)) continue;
                 baby.ParentId = o.Id; baby.ParentGenes = g.Copy(); baby.Generation = o.Generation + 1;
-                baby.Energy = o.Energy * .36; o.Energy *= .59;
+                baby.Energy = Math.Max(0, o.Energy * .36 - TissueEconomy.BuildCost * TissueEconomy.CoreVolume(baby.Genes, 0)); o.Energy *= .59;
                 if (mate != null)
                 {
-                    baby.MateId = mate.Id; baby.Energy += 7; mate.Energy -= 9; mate.LastBirth = Time; mate.Children++; Exchanges++;
+                    double contribution = TissueEconomy.MateContribution(mate.Energy);
+                    baby.MateId = mate.Id; baby.Energy += contribution * (7.0 / 9); mate.Energy -= contribution; mate.LastBirth = Time; mate.Children++; Exchanges++;
                 }
                 o.LastBirth = Time; o.Children++; Births++;
                 if (Tidal && !ObservedShoreBirth && Immersion(center, g.Radius) < .3)
@@ -619,7 +631,9 @@ public sealed partial class World
         {
             var o = Organisms[i];
             if (o.Energy > 0) continue;
-            foreach (var c in o.Body) Detritus.Add(new Remains { Position = c.Position, Energy = 4, Radius = o.Genes.Radius });
+            for (int c = 0; c < o.Body.Count; c++) Detritus.Add(new Remains { Position = o.Body[c].Position, Energy = TissueEconomy.RemainsFood(TissueEconomy.CoreVolume(o.Genes, c) * o.Body[c].Integrity), Radius = o.Genes.CellRadius(c) });
+            if (o.Genes.Buds != null) for (int b = 0; b < o.BudStates.Count; b++)
+                if (o.BudStates[b].Growth > 0) Detritus.Add(new Remains { Position = o.Center, Energy = TissueEconomy.RemainsFood(TissueEconomy.BranchVolume(o, b, o.BudStates[b].Growth) * o.BudStates[b].Integrity), Radius = o.Genes.Radius * o.Genes.Buds[b].Width });
             Organisms.RemoveAt(i); Deaths++;
         }
         Organisms.AddRange(newborns);
@@ -674,8 +688,11 @@ public sealed partial class World
                 int below = Math.Max(0, z - 1) * Cols * Rows + y * Cols + x, above = Math.Min(Layers - 1, z + 1) * Cols * Rows + y * Cols + x;
                 double saturation = 1 - (Habitat.Temperature(p, Time) - 20) * .012;
                 double air = z == Layers - 1 ? .05 : .006;
-                nextOxygen[i] = Math.Clamp(Oxygen[i] + (Oxygen[left] + Oxygen[right] + Oxygen[up] + Oxygen[down] - 4 * Oxygen[i]) * dt * .18 + (Oxygen[above] + Oxygen[below] - 2 * Oxygen[i]) * dt * .045 + (saturation - Oxygen[i]) * dt * air + algae * .12, 0, 2);
-                nextCarbon[i] = Math.Clamp(Carbon[i] + (Carbon[left] + Carbon[right] + Carbon[up] + Carbon[down] - 4 * Carbon[i]) * dt * .16 + (Carbon[above] + Carbon[below] - 2 * Carbon[i]) * dt * .04 + (1 - Carbon[i]) * dt * air * .5 - algae * .1, 0, 3);
+                // Microbial breakdown of accumulated waste consumes local oxygen.
+                double decay = Math.Min(OrganicMatter[i], dt * .012 * OrganicMatter[i] * Oxygen[i] / (.2 + Oxygen[i]));
+                OrganicMatter[i] -= decay;
+                nextOxygen[i] = Math.Clamp(Oxygen[i] + (Oxygen[left] + Oxygen[right] + Oxygen[up] + Oxygen[down] - 4 * Oxygen[i]) * dt * .18 + (Oxygen[above] + Oxygen[below] - 2 * Oxygen[i]) * dt * .045 + (saturation - Oxygen[i]) * dt * air + algae * .12 - decay * .18, 0, 2);
+                nextCarbon[i] = Math.Clamp(Carbon[i] + (Carbon[left] + Carbon[right] + Carbon[up] + Carbon[down] - 4 * Carbon[i]) * dt * .16 + (Carbon[above] + Carbon[below] - 2 * Carbon[i]) * dt * .04 + (1 - Carbon[i]) * dt * air * .5 - algae * .1 + decay * .12, 0, 3);
             }
         });
         if (Tidal)
@@ -700,7 +717,7 @@ public sealed partial class World
     // Only the worker owns mutable simulation state. Renderers receive independent snapshots.
     public World Snapshot(World? previous = null, bool refreshFields = true)
     {
-        var view = new World(false) { Organisms = new List<Organism>(Organisms.Count), Detritus = new List<Remains>(Detritus.Count), FormatVersion = FormatVersion, Tidal = Tidal, Time = Time, Births = Births, Deaths = Deaths, Exchanges = Exchanges, RecordGeneration = RecordGeneration, TissueMeals = TissueMeals, NextId = NextId, Habitat = Habitat, RandomState = RandomState };
+        var view = new World(false) { Feeding = Feeding.Copy(), FeedingSince = FeedingSince, Organisms = new List<Organism>(Organisms.Count), Detritus = new List<Remains>(Detritus.Count), FormatVersion = FormatVersion, MutationMode = MutationMode, CollectData = CollectData, Seed = Seed, RunId = RunId, PopulationCap = PopulationCap, RestartOnExtinction = RestartOnExtinction, AutomaticRestarts = AutomaticRestarts, Tidal = Tidal, Time = Time, Births = Births, Deaths = Deaths, Exchanges = Exchanges, RecordGeneration = RecordGeneration, TissueMeals = TissueMeals, NextId = NextId, Habitat = Habitat, RandomState = RandomState };
         bool copy = refreshFields || previous == null;
         view.SoilMoisture = copy ? (double[])SoilMoisture.Clone() : previous!.SoilMoisture;
         view.SurfaceWater = copy ? (double[])SurfaceWater.Clone() : previous!.SurfaceWater;
@@ -725,12 +742,13 @@ public sealed partial class World
         path ??= SavePath;
         System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path))!);
         var temp = path + ".tmp";
-        System.IO.File.WriteAllText(temp, JsonSerializer.Serialize(this));
+        using (var file = System.IO.File.Create(temp)) JsonSerializer.Serialize(file, this);
         System.IO.File.Move(temp, path, true);
     }
     public static World Load(string? path = null)
     {
-        var w = JsonSerializer.Deserialize<World>(System.IO.File.ReadAllText(path ?? SavePath)) ?? throw new InvalidDataException("Empty ecosystem save.");
+        using var file = System.IO.File.OpenRead(path ?? SavePath);
+        var w = JsonSerializer.Deserialize<World>(file) ?? throw new InvalidDataException("Empty ecosystem save.");
         if (w.FormatVersion < 2 && w.Food.Length == Cols * Rows)
         {
             double[] Expand(double[] source, bool nutrient)
@@ -790,8 +808,9 @@ public sealed partial class World
         {
             w.AddHabitatPockets(); w.FormatVersion = 8;
         }
+        if (w.FormatVersion < 9) { w.FormatVersion = 9; w.Note("Tissue accounting and force-driven movement enabled"); }
         if (w.SoilMoisture.Length != Cols * Rows || w.SurfaceWater.Length != Cols * Rows || w.SoilMoisture.Any(m => !double.IsFinite(m) || m < 0 || m > 1) || w.SurfaceWater.Any(m => !double.IsFinite(m) || m < 0 || m > 12)) throw new InvalidDataException("Invalid moisture fields.");
-        if (w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation + b.PhaseOffset + b.PhaseRate + b.Contraction + b.Load + b.Slip + b.Memory + b.Signal) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
+        if (!Enum.IsDefined(w.MutationMode) || w.Biofilm.Length != Cols * Rows || w.Food.Length != FieldCount || w.OrganicMatter.Length != FieldCount || w.Oxygen.Length != FieldCount || w.Carbon.Length != FieldCount || !double.IsFinite(w.Time) || w.Organisms.Any(o => o.Body.Count == 0 || o.Body.Count > Development.NodeBudget || o.Genes.Cells < 1 || o.Genes.Cells > Development.NodeBudget || o.Genes.Pattern.Count == 0 || !Branching.Valid(o.Genes) || o.BudStates.Any(b => !double.IsFinite(b.Growth + b.Activation + b.PhaseOffset + b.PhaseRate + b.Contraction + b.Load + b.Slip + b.Memory + b.Signal + b.MotorTurn + b.MotorPitch + b.Deflection.Length) || b.Growth < 0 || b.Growth > 1) || o.Body.Where((c, i) => c.Parent >= i || c.Parent < -1).Any())) throw new InvalidDataException("Invalid ecosystem data.");
         return w;
     }
 }

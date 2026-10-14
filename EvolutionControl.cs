@@ -72,7 +72,7 @@ public static partial class Branching
         return true;
     }
 
-    private static void MutateWiring(Genome g, Random r)
+    private static void MutateWiring(Genome g, Random r, MutationMode mode, double scale)
     {
         var buds = g.Buds!;
         if (buds.Count == 0) return;
@@ -80,10 +80,10 @@ public static partial class Branching
             for (int i = b.Wires.Count - 1; i >= 0; i--)
             {
                 var wire = b.Wires[i];
-                if (r.NextDouble() < .04) { b.Wires.RemoveAt(i); continue; }
-                if (r.NextDouble() < .18) wire.Weight = Math.Clamp(wire.Weight + (r.NextDouble() * 2 - 1) * .35, -2, 2);
-                if (r.NextDouble() < .12) wire.MemoryMix = Math.Clamp(wire.MemoryMix + (r.NextDouble() * 2 - 1) * .25, 0, 1);
-                if (r.NextDouble() < .04) wire.Source = (int)(r.NextDouble() * buds.Count);
+                if (r.NextDouble() < .04 * scale) { b.Wires.RemoveAt(i); continue; }
+                wire.Weight = Mutation.Adjust(r, wire.Weight, .35, -2, 2, .18 * scale, mode);
+                wire.MemoryMix = Mutation.Adjust(r, wire.MemoryMix, .25, 0, 1, .12 * scale, mode);
+                if (r.NextDouble() < .04 * scale) wire.Source = (int)(r.NextDouble() * buds.Count);
             }
         if (r.NextDouble() < .25 && buds.Sum(b => b.Wires.Count) < WireBudget)
             buds[(int)(r.NextDouble() * buds.Count)].Wires.Add(new SignalWire

@@ -13,11 +13,21 @@ internal sealed class HabitatVisual
     private const int TerrainCols = World.Cols * 2, TerrainRows = World.Rows * 2;
     private const double TerrainStep = World.CellSize / 2;
     private const int TextureWidth = World.Cols * 4, TextureHeight = World.Rows * 4;
+    private readonly double[] grains = new double[TextureWidth * TextureHeight];
     private readonly double[] heights = new double[TextureWidth * TextureHeight];
     private readonly WriteableBitmap texture = new(TextureWidth, TextureHeight, 96, 96, PixelFormats.Bgra32, null);
     public HabitatVisual(World w)
     {
         for (int y = 0; y < TextureHeight; y++) for (int x = 0; x < TextureWidth; x++) heights[y * TextureWidth + x] = w.Ground(x * World.CellSize / 4, y * World.CellSize / 4);
+        // Smooth a nonperiodic random field once; no tiled image, stripes, or coarse per-pixel grain.
+        var noise = new Random(82431);
+        for (int i = 0; i < grains.Length; i++) grains[i] = noise.NextDouble();
+        for (int pass = 0; pass < 8; pass++)
+        {
+            var source = (double[])grains.Clone();
+            for (int y = 1; y < TextureHeight - 1; y++) for (int x = 1; x < TextureWidth - 1; x++)
+            { int i = y * TextureWidth + x; grains[i] = (source[i] * 4 + source[i - 1] + source[i + 1] + source[i - TextureWidth] + source[i + TextureWidth]) / 8; }
+        }
         var mesh = new MeshGeometry3D();
         for (int y = 0; y <= TerrainRows; y++) for (int x = 0; x <= TerrainCols; x++)
         {
@@ -76,10 +86,11 @@ internal sealed class HabitatVisual
                 Triangle(edge, crossings[0] - across, crossings[1] - across, crossings[0] + across);
                 Triangle(edge, crossings[1] - across, crossings[1] + across, crossings[0] + across);
             }
-            if (algae > .16 && (index * 17 % 7 < 3))
+            uint hash = unchecked((uint)index * 747796405u + 2891336453u);
+            hash = unchecked(((hash >> (int)((hash >> 28) + 4)) ^ hash) * 277803737u); hash ^= hash >> 22;
+            if (algae > .16 && (hash & 255) < 105)
             {
-                uint hash = (uint)index * 2654435761u;
-                double size = 2 + algae * 8, px = xx + 2 + hash % 15, py = yy + 2 + (hash >> 8) % 15;
+                double size = 2 + algae * 8, px = xx + 2 + ((hash >> 8) & 255) / 255.0 * (World.CellSize - 4), py = yy + 2 + ((hash >> 16) & 255) / 255.0 * (World.CellSize - 4);
                 V p = new(px, py, w.Ground(px, py) + .4);
                 for (int blade = 0; blade < 3; blade++)
                 {
@@ -126,10 +137,9 @@ internal sealed class HabitatVisual
         for (int y = 0; y < TextureHeight; y++) for (int x = 0; x < TextureWidth; x++)
         {
             int i = y * TextureWidth + x, tile = (y / 4) * World.Cols + x / 4;
-            uint hash = unchecked((uint)i * 2246822519u); hash ^= hash >> 13;
-            double grain = (.82 + (hash & 255) / 255.0 * .27) * (1 - Shoreline.Sediment(x * World.CellSize / 4, y * World.CellSize / 4) * .3);
-            double wet = Math.Max(Math.Clamp((level - heights[i]) / 35, 0, 1), w.SoilMoisture[tile] * .8);
-            double algae = w.Biofilm[tile] / 12;
+            double grain = (.93 + grains[i] * .10) * (1 - Shoreline.Sediment(x * World.CellSize / 4, y * World.CellSize / 4) * .3);
+            double wet = Math.Max(Math.Clamp((level - heights[i]) / 35, 0, 1), SampleField(w.SoilMoisture, x / 4.0, y / 4.0) * .8);
+            double algae = SampleField(w.Biofilm, x / 4.0, y / 4.0) / 12;
             pixels[i * 4] = (byte)((107 * (1 - wet) + 83 * wet) * grain);
             pixels[i * 4 + 1] = (byte)((149 * (1 - wet) + 100 * wet) * grain);
             pixels[i * 4 + 2] = (byte)((174 * (1 - wet) + 67 * wet) * grain * (1 - algae * .18)); pixels[i * 4 + 3] = 255;
@@ -193,6 +203,14 @@ internal sealed class HabitatVisual
             Clip(nodes[a], nodes[b], nodes[a + 1]); Clip(nodes[a + 1], nodes[b], nodes[b + 1]);
         }
         return mesh;
+    }
+
+    private static double SampleField(double[] field, double x, double y)
+    {
+        int ix = Math.Clamp((int)x, 0, World.Cols - 2), iy = Math.Clamp((int)y, 0, World.Rows - 2);
+        double fx = Math.Clamp(x - ix, 0, 1), fy = Math.Clamp(y - iy, 0, 1); int i = iy * World.Cols + ix;
+        return (field[i] * (1 - fx) + field[i + 1] * fx) * (1 - fy)
+            + (field[i + World.Cols] * (1 - fx) + field[i + World.Cols + 1] * fx) * fy;
     }
 
     private static void Triangle(MeshGeometry3D mesh, V a, V b, V c)

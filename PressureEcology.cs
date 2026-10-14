@@ -11,6 +11,26 @@ public sealed class FoodClump
 
 public sealed partial class World
 {
+    private double[]? spentLight;
+    private double lightBudgetTime = double.NaN;
+
+    // All tissue in a vertical habitat column shares its incoming light. The budget
+    // is based on column area in reference-cell units, not on organism count.
+    public double Photosynthesize(V point, double requested, double dt)
+    {
+        if (requested <= 0 || dt <= 0) return 0;
+        spentLight ??= new double[Cols * Rows];
+        if (lightBudgetTime != Time) { Array.Clear(spentLight); lightBudgetTime = Time; }
+        int column = SurfaceTile(point), tile = Tile(point);
+        V surface = new((column % Cols + .5) * CellSize, (column / Cols + .5) * CellSize, Depth);
+        double incoming = dt * .6 * CellSize * CellSize / (Math.PI * 36)
+            * Math.Max(0, Habitat.Light(surface, Time)) * (Tidal ? Daylight : 1);
+        double captured = Math.Min(requested, Math.Min(Math.Max(0, incoming - spentLight[column]), Math.Max(0, Carbon[tile] * 4)));
+        spentLight[column] += captured;
+        Carbon[tile] = Math.Max(0, Carbon[tile] - captured * .25);
+        Oxygen[tile] = Math.Min(2, Oxygen[tile] + captured * .22);
+        return captured;
+    }
     public List<FoodClump> Clumps { get; set; } = [];
     public double CurrentTime { get; set; }
     public double ClumpAccumulator { get; set; }
@@ -307,6 +327,13 @@ public sealed partial class World
 
     public void CacheAnatomy(Organism o)
     {
+        double volume = TissueEconomy.Volume(o), intact = 0;
+        for (int i = 0; i < o.Body.Count; i++) intact += TissueEconomy.CoreVolume(o.Genes, i);
+        if (o.Genes.Buds != null) for (int i = 0; i < o.BudStates.Count; i++) intact += TissueEconomy.BranchVolume(o, i, o.BudStates[i].Growth);
+        double wound = 1 - Math.Clamp(volume / Math.Max(1e-12, intact), 0, 1);
+        o.StepTissueCue = Math.Min(2, .25 + Math.Sqrt(volume)) * (.25 + .75 * wound);
+        o.PhysicalExtent = 0;
+        for (int i = 0; i < o.Body.Count; i++) o.PhysicalExtent = Math.Max(o.PhysicalExtent, (o.Body[i].Position - o.StepCenter).Length + o.Genes.CellRadius(i) * Math.Max(o.Genes.Elongation, Math.Max(.95, o.Genes.Flattening)));
         if (o.Genes.Buds == null) return;
         if (o.PhysicalBuds.Length != o.Genes.Buds.Count) o.PhysicalBuds = new BudPose[o.Genes.Buds.Count];
         Branching.Poses(o, o.Age, o.PhysicalBuds, WaterLevel);
@@ -315,8 +342,14 @@ public sealed partial class World
         foreach (var part in o.PhysicalBuds)
         {
             if (!part.Active) continue;
-            min = new(Math.Min(min.X, part.Tip.X - part.Radius), Math.Min(min.Y, part.Tip.Y - part.Radius), Math.Min(min.Z, part.Tip.Z - part.Radius));
-            max = new(Math.Max(max.X, part.Tip.X + part.Radius), Math.Max(max.Y, part.Tip.Y + part.Radius), Math.Max(max.Z, part.Tip.Z + part.Radius));
+            double radius = part.Radius * Math.Max(1.05, part.Taper) * Math.Max(1, part.Flatness);
+            o.PhysicalExtent = Math.Max(o.PhysicalExtent, Math.Max((part.Root - o.StepCenter).Length, Math.Max((part.Joint - o.StepCenter).Length, (part.Tip - o.StepCenter).Length)) + radius);
+            min = new(Math.Min(min.X, Math.Min(part.Root.X, Math.Min(part.Joint.X, part.Tip.X)) - radius),
+                Math.Min(min.Y, Math.Min(part.Root.Y, Math.Min(part.Joint.Y, part.Tip.Y)) - radius),
+                Math.Min(min.Z, Math.Min(part.Root.Z, Math.Min(part.Joint.Z, part.Tip.Z)) - radius));
+            max = new(Math.Max(max.X, Math.Max(part.Root.X, Math.Max(part.Joint.X, part.Tip.X)) + radius),
+                Math.Max(max.Y, Math.Max(part.Root.Y, Math.Max(part.Joint.Y, part.Tip.Y)) + radius),
+                Math.Max(max.Z, Math.Max(part.Root.Z, Math.Max(part.Joint.Z, part.Tip.Z)) + radius));
         }
         o.BudMinimum = min; o.BudMaximum = max;
     }
@@ -324,12 +357,16 @@ public sealed partial class World
     public bool TissueContact(Organism target, V point, double radius)
     {
         for (int i = 0; i < target.Body.Count; i++)
-            if ((target.Body[i].Position - point).LengthSquared < Math.Pow(radius + target.Genes.CellRadius(i), 2)) return true;
+        {
+            double reach = radius + BodyMechanics.OuterRadius(target, i);
+            if ((target.Body[i].Position - point).LengthSquared > reach * reach) continue;
+            if ((target.Body[i].Position - point).Length < radius + BodyMechanics.Support(target, i, BodyMechanics.Unit(point - target.Body[i].Position))) return true;
+        }
         if (point.X + radius < target.BudMinimum.X || point.X - radius > target.BudMaximum.X
             || point.Y + radius < target.BudMinimum.Y || point.Y - radius > target.BudMaximum.Y
             || point.Z + radius < target.BudMinimum.Z || point.Z - radius > target.BudMaximum.Z) return false;
         foreach (var part in target.PhysicalBuds)
-            if (part.Active && (part.Tip - point).LengthSquared < Math.Pow(radius + part.Radius, 2)) return true;
+            if (part.Active && BranchGeometry.Gap(part, point) < radius) return true;
         return false;
     }
 
@@ -345,7 +382,7 @@ public sealed partial class World
         for (int i = 0; i < victim.PhysicalBuds.Length; i++)
         {
             var p = victim.PhysicalBuds[i]; if (!p.Active) continue;
-            double gap = (p.Tip - point).Length - p.Radius;
+            double gap = BranchGeometry.Gap(p, point);
             if (gap < nearest) { nearest = gap; bud = i; }
         }
         if (bud >= 0)
@@ -374,19 +411,20 @@ public sealed partial class World
             if (!removed[i]) continue;
             var state = o.BudStates[i];
             if (i < o.PhysicalBuds.Length && o.PhysicalBuds[i].Active)
-                Detritus.Add(new Remains { Position = o.PhysicalBuds[i].Tip, Energy = state.Growth * Math.Max(.05, b.Length * b.Width * b.Width * o.Genes.Radius), Radius = Math.Max(.3, o.PhysicalBuds[i].Radius) });
-            state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0; state.Memory = 0; state.Activation = 0; state.Load = 0; state.Slip = 0; state.PhaseRate = 0; state.Contraction = 0;
+                Detritus.Add(new Remains { Position = o.PhysicalBuds[i].Tip, Energy = TissueEconomy.RemainsFood(TissueEconomy.BranchVolume(o, i, state.Growth) * state.Integrity), Radius = Math.Max(.3, o.PhysicalBuds[i].Radius) });
+            state.Feeding = new(); state.Integrity = 0; state.Growth = 0; state.FormedAt = o.Age; state.LastDamage = Time; state.Signal = 0; state.Memory = 0; state.Activation = 0; state.Load = 0; state.Slip = 0; state.PhaseRate = 0; state.Contraction = 0;
         }
         LostBranches++;
     }
 
     public void RepairBody(Organism o, double dt)
     {
-        foreach (var cell in o.Body)
+        for (int i = 0; i < o.Body.Count; i++)
         {
+            var cell = o.Body[i];
             if (cell.Integrity >= 1 || Time - cell.LastDamage < 8 || o.Energy < o.Capacity * .4) continue;
             double repair = Math.Min(1 - cell.Integrity, dt * .004);
-            cell.Integrity += repair; o.Energy -= repair * 22;
+            cell.Integrity += repair; o.Energy -= repair * TissueEconomy.BuildCost * TissueEconomy.CoreVolume(o.Genes, i);
         }
         o.Anchoring = 0;
     }

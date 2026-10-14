@@ -24,7 +24,8 @@ public partial class MainWindow : Window
     private readonly bool smokeDetail = Environment.GetCommandLineArgs().Contains("--smoke-detail");
     private bool detailSelected;
     private bool closingComplete, closingStarted, changingWorld;
-    private readonly bool perf = Environment.GetCommandLineArgs().Any(a => a == "--smoke-perf" || a == "--smoke-reduced" || a == "--smoke-display-benchmark");
+    private readonly bool crowdedSmoke = Environment.GetCommandLineArgs().Contains("--smoke-crowded");
+    private readonly bool perf = Environment.GetCommandLineArgs().Any(a => a == "--smoke-perf" || a == "--smoke-reduced" || a == "--smoke-display-benchmark" || a == "--smoke-crowded");
     private readonly bool smallSmoke = Environment.GetCommandLineArgs().Contains("--smoke-small");
     private readonly List<double> frameTimes = [];
     private readonly List<double> renderCosts = [];
@@ -44,6 +45,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        if (smoke) Application.Current.DispatcherUnhandledException += (_, e) => { File.WriteAllText("smoke-error.txt", e.Exception.ToString()); e.Handled = true; Application.Current.Shutdown(1); };
         string? error = null;
         try
         {
@@ -55,7 +57,9 @@ public partial class MainWindow : Window
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-moisture")) File.Copy(World.SavePath, World.SavePath + ".pre-moisture");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-pressures")) File.Copy(World.SavePath, World.SavePath + ".pre-pressures");
             if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-branching")) File.Copy(World.SavePath, World.SavePath + ".pre-branching");
-            world = (!smoke || perf) && File.Exists(World.SavePath) ? World.Load() : World.Create();
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-tissue-forces")) File.Copy(World.SavePath, World.SavePath + ".pre-tissue-forces");
+            if (!smoke && File.Exists(World.SavePath) && !File.Exists(World.SavePath + ".pre-evolution-mechanics")) File.Copy(World.SavePath, World.SavePath + ".pre-evolution-mechanics");
+            world = (!smoke || (perf && !crowdedSmoke)) && File.Exists(World.SavePath) ? World.Load() : World.Create();
         }
         catch (Exception ex)
         {
@@ -88,7 +92,25 @@ public partial class MainWindow : Window
             var o = new Organism { Id = 1, Age = 100, Energy = 80, Genes = g, Heading = .4, Body = [new Cell { Position = new(2400, 1050, world.Ground(2400, 1050) + 18) }], BudStates = g.Buds.Select(b => new BudState { Growth = 1, FormedAt = 0 }).ToList() };
             world.Organisms.Add(o);
         }
-        runner = new SimulationRunner(world);
+        if (Environment.GetCommandLineArgs().Contains("--smoke-restart"))
+        {
+            world.Organisms.Clear(); world.RestartOnExtinction = true;
+        }
+        if (crowdedSmoke)
+        {
+            world.Organisms.Clear(); var random = new Random(31);
+            for (int i = 0; i < 8000; i++)
+            {
+                double x = random.NextDouble() * World.Width, y = random.NextDouble() * World.Height;
+                world.Organisms.Add(new Organism { Id = i + 1, Genes = new Genome { Cells = 1, Radius = 4, Hue = random.NextDouble(), Buds = [] },
+                    Body = [new Cell { Position = new(x, y, world.Ground(x, y) + 8) }] });
+            }
+        }
+        runner = new SimulationRunner(world, initialSpeed: crowdedSmoke ? 0 : 1, dataDirectory: smoke ? Path.Combine(Environment.CurrentDirectory, "research") : null);
+        RestartBox.IsChecked = runner.RestartOnExtinction;
+        PopulationCapInput.Text = runner.PopulationCap.ToString();
+        CollectDataBox.IsChecked = runner.CollectData;
+        SeedLabel.Text = world.Seed.HasValue ? $"Seed: {world.Seed}" : "Seed: unknown (older save)";
         if (Environment.GetCommandLineArgs().Contains("--smoke-reduced")) ReducedDisplayBox.IsChecked = true;
         world = runner.Snapshot;
         view = new Aquarium(world);
@@ -105,14 +127,73 @@ public partial class MainWindow : Window
         Deactivated += (_, _) => view.CancelNavigation();
         SizeChanged += (_, _) => { SaveLabel.Visibility = ActualWidth < 1240 ? Visibility.Collapsed : Visibility.Visible; SpeedLabel.Visibility = ActualWidth < 1080 ? Visibility.Collapsed : Visibility.Visible; };
         if (error != null) { SaveLabel.Text = "Previous save unavailable"; Loaded += (_, _) => MessageBox.Show(this, error, "Tideglass"); }
-        if (perf) { speed = displayBenchmark ? 100 : 20; runner.Speed = speed; }
-        if (!smoke) view.Coast();
+        if (perf && !crowdedSmoke) { speed = displayBenchmark ? 100 : 20; runner.Speed = speed; }
+        if (crowdedSmoke) { paused = true; speed = 0; PauseButton.Content = "▶  Resume"; view.Overview(); }
+        if (!smoke) { view.Coast(); ShorelineButton.Content = view.ViewName; }
         if (noDisplaySmoke || Environment.GetCommandLineArgs().Contains("--no-display")) Loaded += (_, _) =>
         {
             noDisplaySmokeStarted = runner.Status.Time;
             NoDisplayClick(this, new());
         };
         if (smallSmoke) { Width = 960; Height = 640; }
+        bool viewSmokeStarted = false;
+        if (Environment.GetCommandLineArgs().Contains("--smoke-views")) Loaded += async (_, _) =>
+        {
+            if (viewSmokeStarted) return; viewSmokeStarted = true;
+            screenshotTaken = true; runner.Speed = 0;
+            int originalCap = runner.PopulationCap;
+            foreach (string invalid in new[] { "-1", "abc", "", "2147483648" })
+            {
+                PopulationCapInput.Text = invalid; PopulationCapApply(this, new());
+                if (!populationCapInvalid || runner.PopulationCap != originalCap) throw new InvalidOperationException("Invalid population cap was accepted");
+            }
+            PopulationCapInput.Text = "7"; PopulationCapApply(this, new());
+            if (runner.PopulationCap != 7 || PopulationCapStatus.Text != "Births paused") throw new InvalidOperationException("Population cap did not apply");
+            PopulationCapInput.Text = "0"; PopulationCapApply(this, new());
+            if (runner.PopulationCap != 0 || PopulationCapStatus.Text != "Unlimited") throw new InvalidOperationException("Unlimited cap did not apply");
+            PopulationCapInput.Text = originalCap.ToString(); PopulationCapApply(this, new());
+            void Capture(string name)
+            {
+                var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
+                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using var file = File.Create(name + ".png"); encoder.Save(file);
+            }
+            var labels = new[] { "Shoreline", "Waterline", "Overhead", "Open water", "Swimmers", "Bottom dwellers" };
+            for (int i = 0; i < labels.Length; i++)
+            {
+                CoastClick(this, new());
+                if ((string)ShorelineButton.Content != labels[i]) throw new InvalidOperationException("View cycle label mismatch");
+                await Task.Delay(750); Capture("view-" + i);
+            }
+            StatsClick(this, new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Mouse.MouseUpEvent });
+            if (StatsDetails.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Stats failed to collapse");
+            var previousState = WindowState; FullscreenClick(this, new()); await Task.Delay(300);
+            if (WindowStyle != WindowStyle.None || !fullscreen) throw new InvalidOperationException("Fullscreen failed");
+            Capture("fullscreen"); FullscreenClick(this, new()); await Task.Delay(300);
+            if (WindowState != previousState || fullscreen) throw new InvalidOperationException("Window restore failed");
+            Width = 960; Height = 640; await Task.Delay(300); Capture("settings-small");
+            var seedDialog = new NewRunDialog(this);
+            seedDialog.Loaded += async (_, _) =>
+            {
+                await Task.Delay(200);
+                var bitmap = new RenderTargetBitmap((int)seedDialog.ActualWidth, (int)seedDialog.ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(seedDialog);
+                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using (var file = File.Create("new-seed-dialog.png")) encoder.Save(file);
+                seedDialog.SeedInput.Text = "not a seed";
+                seedDialog.StartButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (seedDialog.ValidationMessage.Visibility != Visibility.Visible) throw new InvalidOperationException("Invalid seed accepted");
+                seedDialog.SeedInput.Text = "-12345";
+                seedDialog.StartButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+            if (seedDialog.ShowDialog() != true || seedDialog.Seed != -12345) throw new InvalidOperationException("Seed dialog did not return entered seed");
+            var cancelDialog = new NewRunDialog(this);
+            cancelDialog.Loaded += (_, _) => cancelDialog.Close();
+            if (cancelDialog.ShowDialog() == true) throw new InvalidOperationException("Cancel started a new run");
+            var randomDialog = new NewRunDialog(this);
+            randomDialog.Loaded += (_, _) => randomDialog.StartButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (randomDialog.ShowDialog() != true) throw new InvalidOperationException("Blank seed did not start a random run");
+            File.WriteAllText("view-check.txt", "PASS: six views, stats, fullscreen, bottom controls at narrow width, seed validation, explicit/random seeds and cancel"); Close();
+        };
         if (Environment.GetCommandLineArgs().Contains("--smoke-coast")) view.Coast();
         if (Environment.GetCommandLineArgs().Contains("--smoke-rocks")) view.RockPreview();
         if (Environment.GetCommandLineArgs().Contains("--smoke-evolved"))
@@ -145,7 +226,7 @@ public partial class MainWindow : Window
                 view.Select(candidates[Random.Shared.Next(candidates.Length)]); view.Following = true; view.Zoom = 6;
             }
         }
-        if ((smokeDetail || smallSmoke || perf) && now > 1 && !detailSelected)
+        if (!crowdedSmoke && (smokeDetail || smallSmoke || perf) && now > 1 && !detailSelected)
         {
             detailSelected = true;
             view.Select(world.Organisms.Where(o => o.Body.Count >= 3).OrderBy(o => (o.Center - new V(World.Width / 2, World.Height / 2)).Length).FirstOrDefault());
@@ -168,6 +249,7 @@ public partial class MainWindow : Window
             int exposed = world.Organisms.Count(o => world.Immersion(o.Center, o.Genes.Radius) < .3);
             int bottom = world.Organisms.Count(o => o.Center.Z - world.Ground(o.Center.X, o.Center.Y) < o.Genes.Radius * 3);
             HabitatLabel.Text += $"\n{bottom:N0} near the bottom / {exposed:N0} exposed / {world.Organisms.Count(o => o.GroundContacts > 0):N0} gripping";
+            if (world.AutomaticRestarts > 0) HabitatLabel.Text += $"\nAutomatic restarts: {world.AutomaticRestarts:N0}";
             var waterAt = view.Selected?.Center ?? new V(World.Width / 2, World.Height / 2, World.Depth / 2);
             WaterLabel.Text = $"{world.Habitat.Temperature(waterAt, world.Time):F1} °C · O₂ {world.Oxygen[world.Tile(waterAt)] * 100:F0}% · carbon {world.Carbon[world.Tile(waterAt)]:F2}\nTide {world.WaterLevel:F0} / {(Math.Cos(world.Time * Math.Tau / 360) > 0 ? "rising" : "falling")} / light {Shoreline.Daylight(world.Time):P0}" + (view.ShowWater ? " · O₂ slice on" : "");
             WaterLabel.Text += $"\nCurrent {world.FlowAt(waterAt).Length:F1} / {world.Clumps.Count:N0} food parcels";
@@ -184,12 +266,19 @@ public partial class MainWindow : Window
         }
         if (smoke && !noDisplaySmoke && now > (perf ? 16 : 5) && !screenshotTaken)
         {
+            if (Environment.GetCommandLineArgs().Contains("--smoke-restart") && world.AutomaticRestarts < 1)
+                throw new InvalidOperationException("Automatic restart failed");
             screenshotTaken = true;
             var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var file = File.Create(perf ? "preview-3d-perf.png" : smallSmoke ? "preview-3d-small.png" : smokeDetail ? "preview-3d-detail.png" : "preview-3d.png")) encoder.Save(file);
             if (perf)
             {
+                if (crowdedSmoke)
+                {
+                    if (view.DetailedCreatureCount > 193 || view.DistantBatchCount == 0) throw new InvalidOperationException("Crowded rendering did not limit detail and batch distant organisms");
+                    File.WriteAllText("crowded-check.txt", $"PASS: {world.Organisms.Count} organisms; {view.DetailedCreatureCount} detailed; {view.DistantBatchCount} distant batches; {view.LastRenderMilliseconds:F2} ms CPU render update");
+                }
                 frameTimes.Sort(); renderCosts.Sort();
                 File.WriteAllText("performance-3d.txt", $"Hardware tier: {RenderCapability.Tier >> 16}\nPopulation: {world.Organisms.Count}\nCells: {view.VisibleCellCount}\nMean rendering-callback interval: {frameTimes.Average():F2} ms\nP95 rendering-callback interval: {frameTimes[(int)(frameTimes.Count * .95)]:F2} ms\nMean CPU render update: {renderCosts.Average():F2} ms\nRequested simulation: {speed}x\nAchieved simulation: {runner.AchievedSpeed:F2}x\n");
             }
@@ -267,7 +356,11 @@ public partial class MainWindow : Window
     private async void Maintenance(object? sender, EventArgs e)
     {
         if (closingStarted || changingWorld) return;
+        UpdatePopulationCapStatus();
         double now = clock.Elapsed.TotalSeconds;
+        SeedLabel.Text = runner.Status.Seed.HasValue ? $"Seed: {runner.Status.Seed}" : "Seed: unknown (older save)";
+        DataStatus.Text = runner.DataError != null ? "Data collection failed" : runner.CollectData ? "Collecting data" : "";
+        DataStatus.ToolTip = runner.DataError ?? ResearchRecorder.DefaultDirectory;
         // This timer also runs when the viewport is hidden or the window is minimized.
         if (!smoke && now - saveTime > 60) { saveTime = now; _ = Save(); }
         if (runner.NoDisplay)
@@ -281,6 +374,8 @@ public partial class MainWindow : Window
             SpeedLabel.ToolTip = "Display is off; simulation runs without a speed cap. Pause and autosave remain available.";
             NoDisplayStatus.Text = runner.Error != null ? "Simulation stopped: " + runner.Error
                 : paused ? "Paused" : status.Population == 0 ? "Population extinct. Environment continues running." : "Running at maximum throughput";
+            if (status.AutomaticRestarts > 0) NoDisplayStatus.Text += $" / Automatic restarts: {status.AutomaticRestarts:N0}";
+            if (runner.DataError != null) NoDisplayStatus.Text += " / Data collection failed: " + runner.DataError;
             if (wakeFailed) NoDisplayStatus.Text += " / Could not prevent sleep";
         }
         if (displayBenchmark && now > 2 && !displayBenchmarkStarted)
@@ -308,11 +403,44 @@ public partial class MainWindow : Window
         }
         if (noDisplaySmoke && noDisplaySmokeRestored && now > 8)
         {
+            if (Environment.GetCommandLineArgs().Contains("--smoke-restart") && runner.Snapshot.AutomaticRestarts < 1)
+                throw new InvalidOperationException("No-display automatic restart failed");
             if (runner.Snapshot.Time <= noDisplaySmokeStarted) throw new InvalidOperationException("Display snapshot did not resume");
             Close();
         }
     }
 
+    private bool populationCapInvalid;
+    private void PopulationCapApply(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(PopulationCapInput.Text.Trim(), out int cap) || cap < 0)
+        {
+            populationCapInvalid = true;
+            PopulationCapStatus.Text = "Enter a whole number, 0 or greater";
+            return;
+        }
+        populationCapInvalid = false;
+        runner.PopulationCap = cap;
+        PopulationCapInput.Text = cap.ToString();
+        UpdatePopulationCapStatus();
+    }
+    private void PopulationCapKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) { PopulationCapApply(sender, e); e.Handled = true; }
+    }
+    private void UpdatePopulationCapStatus()
+    {
+        if (populationCapInvalid) return;
+        int cap = runner.PopulationCap;
+        PopulationCapStatus.Text = cap == 0 ? "Unlimited" : runner.Status.Population >= cap ? "Births paused" : "";
+    }
+    private void RestartChanged(object sender, RoutedEventArgs e)
+    {
+        if (runner == null) return;
+        bool enabled = ((CheckBox)sender).IsChecked == true;
+        runner.RestartOnExtinction = enabled;
+        RestartBox.IsChecked = enabled;
+    }
     private void KeepAwakeChanged(object sender, RoutedEventArgs e) { if (runner != null) UpdateWakeRequest(); }
     private void UpdateWakeRequest()
     {
@@ -332,15 +460,52 @@ public partial class MainWindow : Window
     {
         var chosen = (Button)sender;
         speed = int.Parse((string)chosen.Tag); runner.Speed = paused ? 0 : speed;
-        if (chosen.Parent is StackPanel buttons)
+        if (chosen.Parent is Panel buttons)
             foreach (var button in buttons.Children.OfType<Button>().Where(b => b.Tag != null))
             {
                 button.FontWeight = button == chosen ? FontWeights.Bold : FontWeights.Normal;
                 button.BorderBrush = button == chosen ? Brushes.LightSeaGreen : new SolidColorBrush(Color.FromRgb(49, 78, 77));
             }
     }
-    private void CoastClick(object sender, RoutedEventArgs e) { StopWandering(); view.Coast(); }
-    private void OverviewClick(object sender, RoutedEventArgs e) { StopWandering(); view.Overview(); }
+    private bool fullscreen;
+    private WindowState previousWindowState;
+    private ResizeMode previousResizeMode;
+    private void FullscreenClick(object sender, RoutedEventArgs e)
+    {
+        view.CancelNavigation();
+        if (!fullscreen)
+        {
+            previousWindowState = WindowState; previousResizeMode = ResizeMode;
+            WindowState = WindowState.Normal; WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize; WindowState = WindowState.Maximized;
+        }
+        else
+        {
+            WindowState = WindowState.Normal; WindowStyle = WindowStyle.SingleBorderWindow;
+            ResizeMode = previousResizeMode; WindowState = previousWindowState;
+        }
+        fullscreen = !fullscreen; FullscreenButton.Content = fullscreen ? "Exit fullscreen" : "Fullscreen";
+    }
+    private void StatsClick(object sender, MouseButtonEventArgs e)
+    {
+        bool collapse = StatsDetails.Visibility == Visibility.Visible;
+        StatsDetails.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+        StatsIcon.Visibility = collapse ? Visibility.Visible : Visibility.Collapsed; e.Handled = true;
+    }
+    private void CollectDataChanged(object sender, RoutedEventArgs e)
+    {
+        if (runner == null) return;
+        bool enabled = ((CheckBox)sender).IsChecked == true;
+        runner.CollectData = enabled;
+        CollectDataBox.IsChecked = enabled;
+    }
+    private void DataFolderClick(object sender, RoutedEventArgs e)
+    {
+        try { Directory.CreateDirectory(ResearchRecorder.DefaultDirectory); Process.Start(new ProcessStartInfo(ResearchRecorder.DefaultDirectory) { UseShellExecute = true }); }
+        catch (Exception ex) { DataStatus.Text = "Could not open data folder"; DataStatus.ToolTip = ex.Message; }
+    }
+    private void CoastClick(object sender, RoutedEventArgs e) { StopWandering(); view.Coast(); ShorelineButton.Content = view.ViewName; }
+    private void OverviewClick(object sender, RoutedEventArgs e) { StopWandering(); view.Overview(); ShorelineButton.Content = view.ViewName; }
     private void StopWandering() { wandering = false; WanderButton.Content = "Wander"; }
     private void WanderClick(object sender, RoutedEventArgs e) { wandering = !wandering; WanderButton.Content = wandering ? "Wandering" : "Wander"; lastWander = -100; if (!wandering) view.Following = false; }
     private void WaterClick(object sender, RoutedEventArgs e) { view.ShowWater = !view.ShowWater; WaterButton.Content = view.ShowWater ? "O₂ map on" : "O₂ map"; }
@@ -358,11 +523,13 @@ public partial class MainWindow : Window
     }
     private async void NewClick(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "Start a new ecosystem? Your current world will be kept as a backup.", "New ecosystem", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
+        var dialog = new NewRunDialog(this);
+        if (dialog.ShowDialog() != true) return;
+        int seed = dialog.Seed;
         changingWorld = true;
-        try { await runner.NewAsync(Random.Shared.Next()); }
+        try { await runner.NewAsync(seed); }
         catch (Exception ex) { MessageBox.Show(this, "Could not back up the current world: " + ex.Message); changingWorld = false; return; }
-        world = runner.Snapshot; view.World = world; view.Select(null); view.Overview(); changingWorld = false;
+        world = runner.Snapshot; view.World = world; view.Select(null); view.Overview(); ShorelineButton.Content = view.ViewName; changingWorld = false;
         SpecimenHost.Visibility = Visibility.Collapsed;
         CreatureTitle.Text = "Organism"; CreatureInfo.Text = ""; Traits.Text = ""; Inspector.Visibility = Visibility.Collapsed;
         FollowButton.Content = "Find a creature"; DescendantButton.Visibility = Visibility.Collapsed; await Save();
@@ -382,6 +549,9 @@ public partial class MainWindow : Window
     }
     private void OnKey(object sender, KeyEventArgs e)
     {
+        if (!e.IsRepeat && (e.Key == Key.F11 || (e.Key == Key.Escape && fullscreen)))
+        { FullscreenClick(this, new()); e.Handled = true; return; }
+        if (Keyboard.FocusedElement is TextBox) return;
         if (runner.NoDisplay && e.Key != Key.Space) return;
         if (view.SetNavigationKey(e.Key, true)) { e.Handled = true; return; }
         if (e.IsRepeat) return;
@@ -390,6 +560,6 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape) OverviewClick(this, new());
         if (e.Key == Key.G) WanderClick(this, new());
         if (e.Key == Key.H) { hidden = !hidden; Inspector.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible; }
-        if (e.Key == Key.F11) { WindowStyle = WindowStyle == WindowStyle.None ? WindowStyle.SingleBorderWindow : WindowStyle.None; WindowState = WindowState.Maximized; }
+
     }
 }

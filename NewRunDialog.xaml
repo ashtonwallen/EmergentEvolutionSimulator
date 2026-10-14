@@ -1,0 +1,18 @@
+<Window x:Class="Tideglass.NewRunDialog"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="New ecosystem" Width="420" SizeToContent="Height" ResizeMode="NoResize"
+ WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+ Background="#07191D" Foreground="#D9E7DC" FontFamily="Segoe UI">
+ <StackPanel Margin="24">
+  <Label Content="_Seed" Target="{Binding ElementName=SeedInput}" Foreground="#D9E7DC" Padding="0,0,0,8"/>
+  <TextBox x:Name="SeedInput" Background="#142D31" Foreground="#D9E7DC" BorderBrush="#395653" Padding="8,6" FontSize="14"/>
+  <TextBlock Text="Leave blank for a random seed." Foreground="#89A9A1" Margin="0,8,0,0"/>
+  <TextBlock x:Name="ValidationMessage" Text="Enter a whole number from -2147483648 to 2147483647." TextWrapping="Wrap" Foreground="#E4B899" Margin="0,8,0,0" Visibility="Collapsed"/>
+  <TextBlock Text="Your current world will be kept as a backup." Foreground="#A7BEB5" Margin="0,20,0,12" TextWrapping="Wrap"/>
+  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+   <Button Content="Cancel" IsCancel="True" MinWidth="80"/>
+   <Button x:Name="StartButton" Content="Start new run" IsDefault="True" Click="StartClick" MinWidth="110"/>
+  </StackPanel>
+ </StackPanel>
+</Window>

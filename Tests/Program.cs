@@ -3,6 +3,49 @@ using System.Diagnostics;
 
 static void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
 var timer = Stopwatch.StartNew();
+if (args.Length > 0 && args[0] == "--fresh-save")
+{
+    Require(!File.Exists(args[1]), "Fresh save must not overwrite an existing world");
+    var fresh = World.Create(int.Parse(args[2]));
+    fresh.CollectData = true; fresh.RestartOnExtinction = true;
+    fresh.Save(args[1]);
+    Console.WriteLine($"Created {fresh.Organisms.Count} founders; seed={fresh.Seed}; collection and extinction restart enabled");
+    return;
+}
+if (args.Length > 0 && args[0] == "--evolution-diagnostics") { EvolutionDiagnostics.Run(args); return; }
+if (args.Length > 0 && args[0] == "--restart-check") { await RestartChecks.Run(); return; }
+if (args.Length > 0 && args[0] == "--population-cap-check") { await PopulationCapChecks.Run(); return; }
+if (args.Length > 0 && args[0] == "--new-world-check")
+{
+    var loadedWorld = World.Load(args[1]); int count = loadedWorld.Organisms.Count; double time = loadedWorld.Time;
+    var storageRunner = new SimulationRunner(loadedWorld, 0, Path.Combine(args[2], "recording")) { CollectData = false };
+    try
+    {
+        string backup = Path.Combine(args[2], "large-backup.json");
+        var saveWatch = Stopwatch.StartNew();
+        await storageRunner.NewAsync(731, backup);
+        Require(storageRunner.Snapshot.Organisms.Count == 100 && storageRunner.Snapshot.Time == 0, "New world did not replace crowded world");
+        var restored = World.Load(backup);
+        Require(restored.Organisms.Count == count && restored.Time == time, "Large backup lost old population");
+        Console.WriteLine($"PASS: streamed backup and New from {count} organisms; bytes={new FileInfo(backup).Length}; seconds={saveWatch.Elapsed.TotalSeconds:F1}");
+    }
+    finally { await storageRunner.StopAsync(); }
+    return;
+}
+if (args.Length > 0 && args[0] == "--resource-survey")
+{
+    foreach (int seed in args[2].Split(',').Select(int.Parse))
+    {
+        var survey = World.Create(seed); int surveySteps = (int)(double.Parse(args[1]) * 10);
+        for (int tick = 0; tick < surveySteps && survey.Organisms.Count > 0; tick++)
+        {
+            survey.Step(.1);
+            if ((tick + 1) % 3000 == 0 && survey.Organisms.Count > 0) Console.WriteLine($"SURVEY seed={seed} time={survey.Time:F0} population={survey.Organisms.Count} gen={survey.RecordGeneration} meanCells={survey.Organisms.Average(o=>o.Body.Count):F2} branches={survey.Organisms.Average(o=>o.BudStates.Count(b=>b.Growth>.01)):F2} branchless={survey.Organisms.Count(o=>o.BudStates.All(b=>b.Growth<=.01))} O2min={survey.Oxygen.Min():F2}");
+        }
+        Console.WriteLine($"RESULT seed={seed} time={survey.Time:F0} population={survey.Organisms.Count} births={survey.Births} deaths={survey.Deaths}");
+    }
+    return;
+}
 foreach (var genes in new[] { new Genome { Cells = 1 }, new Genome { Cells = 4 }, new Genome { Cells = 8, Elongation = 2.4, Flattening = .24, EdgeGrowth = .65 } })
 {
     var mesh = BodySurface.Create(genes, genes.Cells, 22);
@@ -68,6 +111,13 @@ if (args.Length > 0 && args[0] == "--speed-check")
     await speedRunner.StopAsync();
     return;
 }
+PerformanceChecks.Run();
+await ResourceChecks.Run();
+await PopulationCapChecks.Run();
+PredationChecks.Run();
+await UpgradeChecks.Run();
+EvolutionChecks.Run();
+await RestartChecks.Run();
 World Lab(double light, double enzymes = 0)
 {
     var w = new World { Habitat = new LabHabitat(light) };
@@ -128,7 +178,7 @@ var compactCenter = compact.Organisms[0].Center;
 var migrationPath = Path.Combine(Path.GetTempPath(), "tideglass-expand-" + Guid.NewGuid() + ".json");
 compact.Save(migrationPath);
 var enlarged = World.Load(migrationPath);
-Require(enlarged.FormatVersion == 8 && enlarged.Organisms[0].Id == 7 && enlarged.Organisms[0].Energy == 50 && enlarged.Organisms[0].Generation == 4, "Expansion lost population state");
+Require(enlarged.FormatVersion == 9 && enlarged.Organisms[0].Id == 7 && enlarged.Organisms[0].Energy == 50 && enlarged.Organisms[0].Generation == 4, "Expansion lost population state");
 Require(Math.Abs(enlarged.Organisms[0].Center.X - compactCenter.X * World.HabitatScale) < 1e-8 && (enlarged.Organisms[0].Body[1].Position - enlarged.Organisms[0].Body[0].Position).Length == 12, "Expansion scaled anatomy or failed to spread centers");
 Require(enlarged.Food.SequenceEqual(compact.Food) && enlarged.Biofilm.SequenceEqual(compact.Biofilm), "Expansion changed the food budget");
 Require(enlarged.Organisms[0].Body[1].FormedAt == 8, "Expansion reset developmental age");
@@ -418,7 +468,7 @@ legacy.Food = legacy.Food.Take(World.Cols * World.Rows).ToArray(); legacy.Organi
 legacy.Oxygen = legacy.Oxygen.Take(World.Cols * World.Rows).ToArray(); legacy.Carbon = legacy.Carbon.Take(World.Cols * World.Rows).ToArray();
 foreach (var o in legacy.Organisms) foreach (var c in o.Body) c.Position = new V(c.Position.X,c.Position.Y);
 legacy.Save(path); var migrated = World.Load(path); File.Delete(path);
-Require(migrated.FormatVersion == 8 && migrated.Food.Length == World.FieldCount && migrated.Organisms.Zip(legacy.Organisms).All(p=>p.First.Id == p.Second.Id && p.First.Energy == p.Second.Energy && p.First.Generation == p.Second.Generation && p.First.Center.Z > 0), "Legacy migration lost population state");
+Require(migrated.FormatVersion == 9 && migrated.Food.Length == World.FieldCount && migrated.Organisms.Zip(legacy.Organisms).All(p=>p.First.Id == p.Second.Id && p.First.Energy == p.Second.Energy && p.First.Generation == p.Second.Generation && p.First.Center.Z > 0), "Legacy migration lost population state");
 var runner = new SimulationRunner(World.Create(77)) { Speed = 20 };
 await Task.Delay(500);
 var immutable = runner.Snapshot;
