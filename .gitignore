@@ -13,3 +13,7 @@ pressure-validation.json
 
 display-benchmark.txt
 no-display-check.txt
+
+# Local development notes
+/AGENTS.md
+/.cursor/
